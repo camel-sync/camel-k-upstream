@@ -25,7 +25,7 @@ import (
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 // Important: Run "make generate-deepcopy" to regenerate code after modifying this file
 
-// BuildSpec defines the Build to be executed
+// BuildSpec defines the Build to be executed. Change to be reflected in CRD
 type BuildSpec struct {
 	// The sequence of Build tasks to be performed as part of the Build execution.
 	Tasks []Task `json:"tasks,omitempty"`
