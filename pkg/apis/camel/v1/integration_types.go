@@ -25,7 +25,7 @@ import (
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 // Important: Run "make generate-deepcopy" to regenerate code after modifying this file
 
-// IntegrationSpec defines the desired state of Integration
+// IntegrationSpec defines the desired state of Integration. Simple change!
 type IntegrationSpec struct {
 	Replicas  *int32         `json:"replicas,omitempty"`
 	Sources   []SourceSpec   `json:"sources,omitempty"`
