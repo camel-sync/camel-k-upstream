@@ -19,7 +19,7 @@ package build
 
 import (
 	"context"
-	"encoding/json"
+	"fmt"
 	"os"
 	"time"
 
@@ -32,34 +32,38 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	"github.com/pkg/errors"
-
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+	"github.com/apache/camel-k/v2/pkg/platform"
+	"github.com/apache/camel-k/v2/pkg/util/kubernetes"
+	"github.com/apache/camel-k/v2/pkg/util/kubernetes/log"
 )
 
 const timeoutAnnotation = "camel.apache.org/timeout"
 
-func newMonitorPodAction() Action {
-	return &monitorPodAction{}
+func newMonitorPodAction(reader ctrl.Reader) Action {
+	return &monitorPodAction{
+		reader: reader,
+	}
 }
 
 type monitorPodAction struct {
 	baseAction
+	reader ctrl.Reader
 }
 
-// Name returns a common name of the action
+// Name returns a common name of the action.
 func (action *monitorPodAction) Name() string {
 	return "monitor-pod"
 }
 
-// CanHandle tells whether this action can handle the build
+// CanHandle tells whether this action can handle the build.
 func (action *monitorPodAction) CanHandle(build *v1.Build) bool {
 	return build.Status.Phase == v1.BuildPhasePending || build.Status.Phase == v1.BuildPhaseRunning
 }
 
-// Handle handles the builds
+// Handle handles the builds.
 func (action *monitorPodAction) Handle(ctx context.Context, build *v1.Build) (*v1.Build, error) {
-	pod, err := getBuilderPod(ctx, action.client, build)
+	pod, err := getBuilderPod(ctx, action.reader, build)
 	if err != nil {
 		return nil, err
 	}
@@ -68,21 +72,33 @@ func (action *monitorPodAction) Handle(ctx context.Context, build *v1.Build) (*v
 		switch build.Status.Phase {
 
 		case v1.BuildPhasePending:
-			if pod, err = newBuildPod(ctx, action.client, build); err != nil {
+			if pod, err = newBuildPod(ctx, action.reader, action.client, build); err != nil {
 				return nil, err
 			}
-			// Set the Build as the Pod owner and controller
-			if err = controllerutil.SetControllerReference(build, pod, action.client.GetScheme()); err != nil {
+
+			// If the Builder Pod is in the Build namespace, we can set the ownership to it. If not (global operator mode)
+			// we set the ownership to the Operator Pod instead
+			var owner metav1.Object
+			owner = build
+			if build.Namespace != pod.Namespace {
+				operatorPod := platform.GetOperatorPod(ctx, action.reader, pod.Namespace)
+				if operatorPod != nil {
+					owner = operatorPod
+				}
+			}
+			if err = controllerutil.SetControllerReference(owner, pod, action.client.GetScheme()); err != nil {
 				return nil, err
 			}
+
 			if err = action.client.Create(ctx, pod); err != nil {
-				return nil, errors.Wrap(err, "cannot create build pod")
+				return nil, fmt.Errorf("cannot create build pod: %w", err)
 			}
 
 		case v1.BuildPhaseRunning:
 			// Emulate context cancellation
 			build.Status.Phase = v1.BuildPhaseInterrupted
 			build.Status.Error = "Pod deleted"
+			monitorFinishedBuild(build)
 			return build, nil
 		}
 	}
@@ -94,17 +110,23 @@ func (action *monitorPodAction) Handle(ctx context.Context, build *v1.Build) (*v
 		if action.isPodScheduled(pod) {
 			build.Status.Phase = v1.BuildPhaseRunning
 		}
-		if time.Now().Sub(build.Status.StartedAt.Time) > build.Spec.Timeout.Duration {
+		if time.Since(build.Status.StartedAt.Time) > build.Spec.Timeout.Duration {
 			// Patch the Pod with an annotation, to identify termination signal
 			// has been sent because the Build has timed out
 			if err = action.addTimeoutAnnotation(ctx, pod, metav1.Now()); err != nil {
 				return nil, err
 			}
 			// Send SIGTERM signal to running containers
-			if err = action.sigterm(pod); err != nil {
+			if err = action.sigterm(ctx, pod); err != nil {
 				// Requeue
 				return nil, err
 			}
+
+			monitorFinishedBuild(build)
+		} else {
+			// Monitor running state of the build - this may have been done already by the schedule action but the build monitor is idempotent
+			// We do this here to potentially restore the running build state in the monitor in case of an operator restart
+			monitorRunningBuild(build)
 		}
 
 	case corev1.PodSucceeded:
@@ -117,16 +139,21 @@ func (action *monitorPodAction) Handle(ctx context.Context, build *v1.Build) (*v
 		finishedAt := action.getTerminatedTime(pod)
 		duration := finishedAt.Sub(build.Status.StartedAt.Time)
 		build.Status.Duration = duration.String()
+		action.setConditionsFromTerminationMessages(ctx, pod, &build.Status)
+		monitorFinishedBuild(build)
 
+		buildCreator := kubernetes.GetCamelCreator(build)
 		// Account for the Build metrics
-		observeBuildResult(build, build.Status.Phase, duration)
+		observeBuildResult(build, build.Status.Phase, buildCreator, duration)
 
 		for _, task := range build.Spec.Tasks {
 			if t := task.Buildah; t != nil {
 				build.Status.Image = t.Image
+
 				break
 			} else if t := task.Kaniko; t != nil {
 				build.Status.Image = t.Image
+
 				break
 			}
 		}
@@ -134,21 +161,19 @@ func (action *monitorPodAction) Handle(ctx context.Context, build *v1.Build) (*v
 		for _, container := range pod.Status.ContainerStatuses {
 			if container.Name == "buildah" {
 				build.Status.Digest = container.State.Terminated.Message
+
 				break
 			}
 		}
 
 	case corev1.PodFailed:
 		phase := v1.BuildPhaseFailed
-		message := "Pod failed"
-		if terminationMessage := action.getTerminationMessage(pod); terminationMessage != "" {
-			message = terminationMessage
-		}
+		message := fmt.Sprintf("Builder Pod %s failed (see conditions for more details)", pod.Name)
 		if pod.DeletionTimestamp != nil {
 			phase = v1.BuildPhaseInterrupted
-			message = "Pod deleted"
+			message = fmt.Sprintf("Builder Pod %s deleted", pod.Name)
 		} else if _, ok := pod.GetAnnotations()[timeoutAnnotation]; ok {
-			message = "Build timeout"
+			message = fmt.Sprintf("Builder Pod %s timeout", pod.Name)
 		}
 		// Do not override errored build
 		if build.Status.Phase == v1.BuildPhaseError {
@@ -159,9 +184,12 @@ func (action *monitorPodAction) Handle(ctx context.Context, build *v1.Build) (*v
 		finishedAt := action.getTerminatedTime(pod)
 		duration := finishedAt.Sub(build.Status.StartedAt.Time)
 		build.Status.Duration = duration.String()
+		action.setConditionsFromTerminationMessages(ctx, pod, &build.Status)
+		monitorFinishedBuild(build)
 
+		buildCreator := kubernetes.GetCamelCreator(build)
 		// Account for the Build metrics
-		observeBuildResult(build, build.Status.Phase, duration)
+		observeBuildResult(build, build.Status.Phase, buildCreator, duration)
 	}
 
 	return build, nil
@@ -176,7 +204,7 @@ func (action *monitorPodAction) isPodScheduled(pod *corev1.Pod) bool {
 	return false
 }
 
-func (action *monitorPodAction) sigterm(pod *corev1.Pod) error {
+func (action *monitorPodAction) sigterm(ctx context.Context, pod *corev1.Pod) error {
 	var containers []corev1.ContainerStatus
 	containers = append(containers, pod.Status.InitContainerStatuses...)
 	containers = append(containers, pod.Status.ContainerStatuses...)
@@ -195,7 +223,7 @@ func (action *monitorPodAction) sigterm(pod *corev1.Pod) error {
 
 		r.VersionedParams(&corev1.PodExecOptions{
 			Container: container.Name,
-			Command:   []string{"kill", "-SIGTERM", "1"},
+			Command:   []string{"/bin/bash", "-c", "kill -SIGTERM 1"},
 			Stdout:    true,
 			Stderr:    true,
 			TTY:       false,
@@ -206,7 +234,7 @@ func (action *monitorPodAction) sigterm(pod *corev1.Pod) error {
 			return err
 		}
 
-		err = exec.Stream(remotecommand.StreamOptions{
+		err = exec.StreamWithContext(ctx, remotecommand.StreamOptions{
 			Stdout: os.Stdout,
 			Stderr: os.Stderr,
 			Tty:    false,
@@ -273,37 +301,43 @@ func (action *monitorPodAction) getTerminatedTime(pod *corev1.Pod) metav1.Time {
 	return finishedAt
 }
 
-func (action *monitorPodAction) getTerminationMessage(pod *corev1.Pod) string {
-	var terminationMessages []terminationMessage
-
+// setConditionsFromTerminationMessages sets a condition for all those containers which have been terminated (successfully or not).
+func (action *monitorPodAction) setConditionsFromTerminationMessages(ctx context.Context, pod *corev1.Pod, buildStatus *v1.BuildStatus) {
 	var containers []corev1.ContainerStatus
 	containers = append(containers, pod.Status.InitContainerStatuses...)
 	containers = append(containers, pod.Status.ContainerStatuses...)
 
 	for _, container := range containers {
-		if t := container.State.Terminated; t != nil && t.ExitCode != 0 && t.Message != "" {
-			terminationMessages = append(terminationMessages, terminationMessage{
-				Container: container.Name,
-				Message:   t.Message,
-			})
+		if t := container.State.Terminated; t != nil {
+			var err error
+			terminationMessage := t.Message
+			// Dynamic condition type (it depends on each container name)
+			containerConditionType := v1.BuildConditionType(fmt.Sprintf("Container %s succeeded", container.Name))
+			containerSucceeded := corev1.ConditionTrue
+			if t.ExitCode != 0 {
+				containerSucceeded = corev1.ConditionFalse
+			}
+			if terminationMessage == "" {
+				// TODO we can make it a user variable !?
+				var maxLines int64 = 10
+				logOptions := corev1.PodLogOptions{
+					Container: container.Name,
+					TailLines: &maxLines,
+				}
+				terminationMessage, err = log.DumpLog(ctx, action.client, pod, logOptions)
+				if err != nil {
+					action.L.Errorf(err, "Dumping log for %s container in %s Pod failed", container.Name, pod.Name)
+					terminationMessage = fmt.Sprintf(
+						"Operator was not able to retrieve the error message, please, check the container %s log directly from %s Pod",
+						container.Name,
+						pod.Name,
+					)
+				}
+			}
+
+			terminationReason := fmt.Sprintf("%s (%d)", t.Reason, t.ExitCode)
+			buildStatus.SetCondition(containerConditionType, containerSucceeded, terminationReason, terminationMessage)
 		}
 	}
 
-	switch len(terminationMessages) {
-	case 0:
-		return ""
-	case 1:
-		return terminationMessages[0].Message
-	default:
-		message, err := json.Marshal(terminationMessages)
-		if err != nil {
-			return ""
-		}
-		return string(message)
-	}
-}
-
-type terminationMessage struct {
-	Container string `json:"container,omitempty"`
-	Message   string `json:"message,omitempty"`
 }

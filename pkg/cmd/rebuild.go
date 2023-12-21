@@ -18,15 +18,15 @@ limitations under the License.
 package cmd
 
 import (
+	"errors"
 	"fmt"
 
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 
 	k8sclient "sigs.k8s.io/controller-runtime/pkg/client"
 
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
-	"github.com/apache/camel-k/pkg/client"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+	"github.com/apache/camel-k/v2/pkg/client"
 )
 
 func newCmdRebuild(rootCmdOptions *RootCmdOptions) (*cobra.Command, *rebuildCmdOptions) {
@@ -34,32 +34,50 @@ func newCmdRebuild(rootCmdOptions *RootCmdOptions) (*cobra.Command, *rebuildCmdO
 		RootCmdOptions: rootCmdOptions,
 	}
 	cmd := cobra.Command{
-		Use:     "rebuild [integration]",
-		Short:   "Clear the state of integrations to rebuild them",
-		Long:    `Clear the state of one or more integrations causing a rebuild.`,
+		Use:     "rebuild [integration1] [integration2] ...",
+		Short:   "Clear the state of integrations to rebuild them.",
+		Long:    `Clear the state of one or more integrations causing a rebuild. Rebuild always targets Integration CR, the operator is in charge to apply any change to the related bindings resources (if any).`,
 		PreRunE: decode(&options),
-		RunE:    options.rebuild,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := options.validate(args); err != nil {
+				return err
+			}
+			return options.run(cmd, args)
+		},
 	}
+
+	cmd.Flags().Bool("all", false, "Rebuild all integrations")
 
 	return &cmd, &options
 }
 
 type rebuildCmdOptions struct {
 	*RootCmdOptions
+	RebuildAll bool `mapstructure:"all"`
 }
 
-func (o *rebuildCmdOptions) rebuild(_ *cobra.Command, args []string) error {
+func (o *rebuildCmdOptions) validate(args []string) error {
+	if o.RebuildAll && len(args) > 0 {
+		return errors.New("invalid combination: --all flag is set and at least one integration name is provided")
+	}
+	if !o.RebuildAll && len(args) == 0 {
+		return errors.New("invalid combination: provide one or several integration names or set --all flag for all integrations")
+	}
+
+	return nil
+}
+
+func (o *rebuildCmdOptions) run(cmd *cobra.Command, args []string) error {
 	c, err := o.GetCmdClient()
 	if err != nil {
 		return err
 	}
-
 	var integrations []v1.Integration
-	if len(args) == 0 {
+	if o.RebuildAll {
 		if integrations, err = o.listAllIntegrations(c); err != nil {
 			return err
 		}
-	} else {
+	} else if len(args) > 0 {
 		if integrations, err = o.getIntegrations(c, args); err != nil {
 			return err
 		}
@@ -69,14 +87,14 @@ func (o *rebuildCmdOptions) rebuild(_ *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Printf("%d integrations have been rebuilt\n", len(integrations))
+	fmt.Fprintln(cmd.OutOrStdout(), len(integrations), "integrations have been rebuilt")
 	return nil
 }
 
 func (o *rebuildCmdOptions) listAllIntegrations(c client.Client) ([]v1.Integration, error) {
 	list := v1.NewIntegrationList()
 	if err := c.List(o.Context, &list, k8sclient.InNamespace(o.Namespace)); err != nil {
-		return nil, errors.Wrap(err, fmt.Sprintf("could not retrieve integrations from namespace %s", o.Namespace))
+		return nil, fmt.Errorf("could not retrieve integrations from namespace %s: %w", o.Namespace, err)
 	}
 	return list.Items, nil
 }
@@ -90,7 +108,7 @@ func (o *rebuildCmdOptions) getIntegrations(c client.Client, names []string) ([]
 			Namespace: o.Namespace,
 		}
 		if err := c.Get(o.Context, key, &it); err != nil {
-			return nil, errors.Wrap(err, fmt.Sprintf("could not find integration %s in namespace %s", it.Name, o.Namespace))
+			return nil, fmt.Errorf("could not find integration %s in namespace %s: %w", it.Name, o.Namespace, err)
 		}
 		ints = append(ints, it)
 	}
@@ -102,7 +120,7 @@ func (o *rebuildCmdOptions) rebuildIntegrations(c k8sclient.StatusClient, integr
 		it := i
 		it.Status = v1.IntegrationStatus{}
 		if err := c.Status().Update(o.Context, &it); err != nil {
-			return errors.Wrap(err, fmt.Sprintf("could not rebuild integration %s in namespace %s", it.Name, o.Namespace))
+			return fmt.Errorf("could not rebuild integration %s in namespace %s: %w", it.Name, o.Namespace, err)
 		}
 	}
 	return nil

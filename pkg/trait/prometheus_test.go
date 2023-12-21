@@ -18,7 +18,6 @@ limitations under the License.
 package trait
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -29,28 +28,30 @@ import (
 
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
-	"github.com/apache/camel-k/pkg/util/camel"
-	"github.com/apache/camel-k/pkg/util/kubernetes"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+	"github.com/apache/camel-k/v2/pkg/util/camel"
+	"github.com/apache/camel-k/v2/pkg/util/kubernetes"
 )
 
 func TestConfigurePrometheusTraitInRightPhaseDoesSucceed(t *testing.T) {
 	trait, environment := createNominalPrometheusTest()
 
-	configured, err := trait.Configure(environment)
+	configured, condition, err := trait.Configure(environment)
 
 	assert.Nil(t, err)
 	assert.True(t, configured)
+	assert.Nil(t, condition)
 }
 
 func TestConfigurePrometheusTraitInWrongPhaseDoesNotSucceed(t *testing.T) {
 	trait, environment := createNominalPrometheusTest()
-	environment.Integration.Status.Phase = v1.IntegrationPhaseResolvingKit
+	environment.Integration.Status.Phase = v1.IntegrationPhaseBuildingKit
 
-	configured, err := trait.Configure(environment)
+	configured, condition, err := trait.Configure(environment)
 
 	assert.Nil(t, err)
 	assert.False(t, configured)
+	assert.Nil(t, condition)
 }
 
 func TestApplyNominalPrometheusTraitDoesSucceed(t *testing.T) {
@@ -114,7 +115,7 @@ func TestPrometheusTraitGetPodMonitor(t *testing.T) {
 }
 
 func createNominalPrometheusTest() (*prometheusTrait, *Environment) {
-	trait := newPrometheusTrait().(*prometheusTrait)
+	trait, _ := newPrometheusTrait().(*prometheusTrait)
 	enabled := true
 	trait.Enabled = &enabled
 
@@ -124,7 +125,7 @@ func createNominalPrometheusTest() (*prometheusTrait, *Environment) {
 	}
 
 	environment := &Environment{
-		Catalog:      NewCatalog(context.TODO(), nil),
+		Catalog:      NewCatalog(nil),
 		CamelCatalog: camelCatalog,
 		Integration: &v1.Integration{
 			ObjectMeta: metav1.ObjectMeta{

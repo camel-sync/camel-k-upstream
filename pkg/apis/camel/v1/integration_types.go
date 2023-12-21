@@ -25,49 +25,6 @@ import (
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 // Important: Run "make generate-deepcopy" to regenerate code after modifying this file
 
-// IntegrationSpec defines the desired state of Integration
-type IntegrationSpec struct {
-	Replicas  *int32         `json:"replicas,omitempty"`
-	Sources   []SourceSpec   `json:"sources,omitempty"`
-	Flows     []Flow         `json:"flows,omitempty"`
-	Resources []ResourceSpec `json:"resources,omitempty"`
-	// Deprecated: use the IntegrationKit field
-	Kit                string                  `json:"kit,omitempty"`
-	IntegrationKit     *corev1.ObjectReference `json:"integrationKit,omitempty"`
-	Dependencies       []string                `json:"dependencies,omitempty"`
-	Profile            TraitProfile            `json:"profile,omitempty"`
-	Traits             map[string]TraitSpec    `json:"traits,omitempty"`
-	PodTemplate        *PodSpecTemplate        `json:"template,omitempty"`
-	Configuration      []ConfigurationSpec     `json:"configuration,omitempty"`
-	Repositories       []string                `json:"repositories,omitempty"`
-	ServiceAccountName string                  `json:"serviceAccountName,omitempty"`
-}
-
-// IntegrationStatus defines the observed state of Integration
-type IntegrationStatus struct {
-	Phase        IntegrationPhase `json:"phase,omitempty"`
-	Digest       string           `json:"digest,omitempty"`
-	Image        string           `json:"image,omitempty"`
-	Dependencies []string         `json:"dependencies,omitempty"`
-	Profile      TraitProfile     `json:"profile,omitempty"`
-	// Deprecated: use the IntegrationKit field
-	Kit                string                  `json:"kit,omitempty"`
-	IntegrationKit     *corev1.ObjectReference `json:"integrationKit,omitempty"`
-	Platform           string                  `json:"platform,omitempty"`
-	GeneratedSources   []SourceSpec            `json:"generatedSources,omitempty"`
-	GeneratedResources []ResourceSpec          `json:"generatedResources,omitempty"`
-	RuntimeVersion     string                  `json:"runtimeVersion,omitempty"`
-	RuntimeProvider    RuntimeProvider         `json:"runtimeProvider,omitempty"`
-	Configuration      []ConfigurationSpec     `json:"configuration,omitempty"`
-	Conditions         []IntegrationCondition  `json:"conditions,omitempty"`
-	Version            string                  `json:"version,omitempty"`
-	Replicas           *int32                  `json:"replicas,omitempty"`
-	Selector           string                  `json:"selector,omitempty"`
-	Capabilities       []string                `json:"capabilities,omitempty"`
-	// The timestamp representing the last time when this integration was initialized.
-	InitializationTimestamp *metav1.Time `json:"lastInitTimestamp,omitempty"`
-}
-
 // +genclient
 // +genclient:method=GetScale,verb=get,subresource=scale,result=k8s.io/api/autoscaling/v1.Scale
 // +genclient:method=UpdateScale,verb=update,subresource=scale,input=k8s.io/api/autoscaling/v1.Scale,result=k8s.io/api/autoscaling/v1.Scale
@@ -77,131 +34,222 @@ type IntegrationStatus struct {
 // +kubebuilder:storageversion
 // +kubebuilder:subresource:scale:specpath=.spec.replicas,statuspath=.status.replicas,selectorpath=.status.selector
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`,description="The integration phase"
+// +kubebuilder:printcolumn:name="Runtime Provider",type=string,JSONPath=`.status.runtimeProvider`,description="The runtime version"
+// +kubebuilder:printcolumn:name="Runtime Version",type=string,JSONPath=`.status.runtimeVersion`,description="The runtime provider"
 // +kubebuilder:printcolumn:name="Kit",type=string,JSONPath=`.status.integrationKit.name`,description="The integration kit"
 // +kubebuilder:printcolumn:name="Replicas",type=integer,JSONPath=`.status.replicas`,description="The number of pods"
 
-// Integration is the Schema for the integrations API
+// Integration is the Schema for the integrations API.
 type Integration struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   IntegrationSpec   `json:"spec,omitempty"`
+	// the desired Integration specification
+	Spec IntegrationSpec `json:"spec,omitempty"`
+	// the status of the Integration
 	Status IntegrationStatus `json:"status,omitempty"`
+}
+
+// IntegrationSpec specifies the configuration of an Integration.
+// The Integration will be watched by the operator which will be in charge to run the related application, according to the configuration specified.
+type IntegrationSpec struct {
+	// the number of `Pods` needed for the running Integration
+	Replicas *int32 `json:"replicas,omitempty"`
+	// the sources which contain the Camel routes to run
+	Sources []SourceSpec `json:"sources,omitempty"`
+	// a source in YAML DSL language which contain the routes to run
+	Flows []Flow `json:"flows,omitempty"`
+	// the reference of the `IntegrationKit` which is used for this Integration
+	IntegrationKit *corev1.ObjectReference `json:"integrationKit,omitempty"`
+	// the list of Camel or Maven dependencies required by the Integration
+	Dependencies []string `json:"dependencies,omitempty"`
+	// the profile needed to run this Integration
+	Profile TraitProfile `json:"profile,omitempty"`
+	// the traits needed to run this Integration
+	Traits Traits `json:"traits,omitempty"`
+	// Pod template customization
+	PodTemplate *PodSpecTemplate `json:"template,omitempty"`
+	// Deprecated:
+	// Use camel trait (camel.properties) to manage properties
+	// Use mount trait (mount.configs) to manage configs
+	// Use mount trait (mount.resources) to manage resources
+	// Use mount trait (mount.volumes) to manage volumes
+	Configuration []ConfigurationSpec `json:"configuration,omitempty"`
+	// additional Maven repositories to be used
+	Repositories []string `json:"repositories,omitempty"`
+	// custom SA to use for the Integration
+	ServiceAccountName string `json:"serviceAccountName,omitempty"`
+}
+
+// IntegrationStatus defines the observed state of Integration.
+type IntegrationStatus struct {
+	// ObservedGeneration is the most recent generation observed for this Integration.
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+	// the actual phase
+	Phase IntegrationPhase `json:"phase,omitempty"`
+	// the digest calculated for this Integration
+	Digest string `json:"digest,omitempty"`
+	// the container image used
+	Image string `json:"image,omitempty"`
+	// a list of dependencies needed by the application
+	Dependencies []string `json:"dependencies,omitempty"`
+	// the profile needed to run this Integration
+	Profile TraitProfile `json:"profile,omitempty"`
+	// the reference of the `IntegrationKit` which is used for this Integration
+	IntegrationKit *corev1.ObjectReference `json:"integrationKit,omitempty"`
+	// The IntegrationPlatform watching this Integration
+	Platform string `json:"platform,omitempty"`
+	// a list of sources generated for this Integration
+	GeneratedSources []SourceSpec `json:"generatedSources,omitempty"`
+	// the runtime version targeted for this Integration
+	RuntimeVersion string `json:"runtimeVersion,omitempty"`
+	// the runtime provider targeted for this Integration
+	RuntimeProvider RuntimeProvider `json:"runtimeProvider,omitempty"`
+	// Deprecated:
+	// a list of configuration specification
+	Configuration []ConfigurationSpec `json:"configuration,omitempty"`
+	// a list of events happened for the Integration
+	Conditions []IntegrationCondition `json:"conditions,omitempty"`
+	// the operator version
+	Version string `json:"version,omitempty"`
+	// the number of replicas
+	Replicas *int32 `json:"replicas,omitempty"`
+	// label selector
+	Selector string `json:"selector,omitempty"`
+	// features offered by the Integration
+	Capabilities []string `json:"capabilities,omitempty"`
+	// the timestamp representing the last time when this integration was initialized.
+	InitializationTimestamp *metav1.Time `json:"lastInitTimestamp,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// IntegrationList contains a list of Integration
+// IntegrationList contains a list of Integration.
 type IntegrationList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []Integration `json:"items"`
 }
 
-// IntegrationPhase --
+// IntegrationPhase --.
 type IntegrationPhase string
 
-// IntegrationConditionType --
+// IntegrationConditionType --.
 type IntegrationConditionType string
 
 const (
-	// IntegrationKind --
+	// IntegrationKind --.
 	IntegrationKind string = "Integration"
 
-	// IntegrationPhaseNone --
+	// IntegrationPhaseNone --.
 	IntegrationPhaseNone IntegrationPhase = ""
-	// IntegrationPhaseInitialization --
-	IntegrationPhaseInitialization IntegrationPhase = "Initialization"
-	// IntegrationPhaseWaitingForPlatform --
+	// IntegrationPhaseWaitingForPlatform --.
 	IntegrationPhaseWaitingForPlatform IntegrationPhase = "Waiting For Platform"
-	// IntegrationPhaseBuildingKit --
+	// IntegrationPhaseInitialization --.
+	IntegrationPhaseInitialization IntegrationPhase = "Initialization"
+	// IntegrationPhaseBuildingKit --.
 	IntegrationPhaseBuildingKit IntegrationPhase = "Building Kit"
-	// IntegrationPhaseResolvingKit --
-	IntegrationPhaseResolvingKit IntegrationPhase = "Resolving Kit"
-	// IntegrationPhaseWaitingForBindings e.g Service Bindings --
-	IntegrationPhaseWaitingForBindings IntegrationPhase = "Waiting for Bindings"
-	// IntegrationPhaseDeploying --
+	// IntegrationPhaseDeploying --.
 	IntegrationPhaseDeploying IntegrationPhase = "Deploying"
-	// IntegrationPhaseRunning --
+	// IntegrationPhaseRunning --.
 	IntegrationPhaseRunning IntegrationPhase = "Running"
-	// IntegrationPhaseError --
+	// IntegrationPhaseError --.
 	IntegrationPhaseError IntegrationPhase = "Error"
 
-	// IntegrationConditionKitAvailable --
+	// IntegrationConditionKitAvailable --.
 	IntegrationConditionKitAvailable IntegrationConditionType = "IntegrationKitAvailable"
-	// IntegrationConditionPlatformAvailable --
+	// IntegrationConditionPlatformAvailable --.
 	IntegrationConditionPlatformAvailable IntegrationConditionType = "IntegrationPlatformAvailable"
-	// IntegrationConditionDeploymentAvailable --
+	// IntegrationConditionDeploymentAvailable --.
 	IntegrationConditionDeploymentAvailable IntegrationConditionType = "DeploymentAvailable"
-	// IntegrationConditionServiceAvailable --
+	// IntegrationConditionServiceAvailable --.
 	IntegrationConditionServiceAvailable IntegrationConditionType = "ServiceAvailable"
-	// IntegrationConditionKnativeServiceAvailable --
+	// IntegrationConditionKnativeServiceAvailable --.
 	IntegrationConditionKnativeServiceAvailable IntegrationConditionType = "KnativeServiceAvailable"
-	// IntegrationConditionCronJobAvailable --
+	// IntegrationConditionKnativeAvailable --.
+	IntegrationConditionKnativeAvailable IntegrationConditionType = "KnativeAvailable"
+	// IntegrationConditionCronJobAvailable --.
 	IntegrationConditionCronJobAvailable IntegrationConditionType = "CronJobAvailable"
-	// IntegrationConditionServiceBindingsCollectionReady --
-	IntegrationConditionServiceBindingsCollectionReady IntegrationConditionType = "ServiceBindingsCollectionReady"
-	// IntegrationConditionExposureAvailable --
+	// IntegrationConditionExposureAvailable --.
 	IntegrationConditionExposureAvailable IntegrationConditionType = "ExposureAvailable"
-	// IntegrationConditionPrometheusAvailable --
+	// IntegrationConditionPrometheusAvailable --.
 	IntegrationConditionPrometheusAvailable IntegrationConditionType = "PrometheusAvailable"
-	// IntegrationConditionJolokiaAvailable --
+	// IntegrationConditionJolokiaAvailable --.
 	IntegrationConditionJolokiaAvailable IntegrationConditionType = "JolokiaAvailable"
-	// IntegrationConditionProbesAvailable --
+	// IntegrationConditionProbesAvailable --.
 	IntegrationConditionProbesAvailable IntegrationConditionType = "ProbesAvailable"
-	// IntegrationConditionReady --
+	// IntegrationConditionReady --.
 	IntegrationConditionReady IntegrationConditionType = "Ready"
-
-	// IntegrationConditionKitAvailableReason --
+	// IntegrationConditionTraitInfo --.
+	IntegrationConditionTraitInfo IntegrationConditionType = "TraitInfo"
+	// IntegrationConditionKitAvailableReason --.
 	IntegrationConditionKitAvailableReason string = "IntegrationKitAvailable"
-	// IntegrationConditionPlatformAvailableReason --
+	// IntegrationConditionPlatformAvailableReason --.
 	IntegrationConditionPlatformAvailableReason string = "IntegrationPlatformAvailable"
-	// IntegrationConditionDeploymentAvailableReason --
+	// IntegrationConditionDeploymentAvailableReason --.
 	IntegrationConditionDeploymentAvailableReason string = "DeploymentAvailable"
-	// IntegrationConditionDeploymentNotAvailableReason --
+	// IntegrationConditionDeploymentNotAvailableReason --.
 	IntegrationConditionDeploymentNotAvailableReason string = "DeploymentNotAvailable"
-	// IntegrationConditionServiceAvailableReason --
+	// IntegrationConditionServiceAvailableReason --.
 	IntegrationConditionServiceAvailableReason string = "ServiceAvailable"
-	// IntegrationConditionServiceNotAvailableReason --
+	// IntegrationConditionServiceNotAvailableReason --.
 	IntegrationConditionServiceNotAvailableReason string = "ServiceNotAvailable"
-	// IntegrationConditionContainerNotAvailableReason --
+	// IntegrationConditionContainerNotAvailableReason --.
 	IntegrationConditionContainerNotAvailableReason string = "ContainerNotAvailable"
-	// IntegrationConditionRouteAvailableReason --
+	// IntegrationConditionRouteAvailableReason --.
 	IntegrationConditionRouteAvailableReason string = "RouteAvailable"
-	// IntegrationConditionRouteNotAvailableReason --
+	// IntegrationConditionRouteNotAvailableReason --.
 	IntegrationConditionRouteNotAvailableReason string = "RouteNotAvailable"
-	// IntegrationConditionIngressAvailableReason --
+	// IntegrationConditionIngressAvailableReason --.
 	IntegrationConditionIngressAvailableReason string = "IngressAvailable"
-	// IntegrationConditionIngressNotAvailableReason --
+	// IntegrationConditionIngressNotAvailableReason --.
 	IntegrationConditionIngressNotAvailableReason string = "IngressNotAvailable"
-	// IntegrationConditionKnativeServiceAvailableReason --
+	// IntegrationConditionKnativeServiceAvailableReason --.
 	IntegrationConditionKnativeServiceAvailableReason string = "KnativeServiceAvailable"
-	// IntegrationConditionKnativeServiceNotAvailableReason --
+	// IntegrationConditionKnativeServiceNotAvailableReason --.
 	IntegrationConditionKnativeServiceNotAvailableReason string = "KnativeServiceNotAvailable"
-	// IntegrationConditionCronJobAvailableReason --
+	// IntegrationConditionKnativeNotInstalledReason --.
+	IntegrationConditionKnativeNotInstalledReason string = "KnativeNotInstalled"
+	// IntegrationConditionCronJobAvailableReason --.
 	IntegrationConditionCronJobAvailableReason string = "CronJobAvailableReason"
-	// IntegrationConditionCronJobNotAvailableReason --
+	// IntegrationConditionCronJobNotAvailableReason --.
 	IntegrationConditionCronJobNotAvailableReason string = "CronJobNotAvailableReason"
-	// IntegrationConditionPrometheusAvailableReason --
+	// IntegrationConditionPrometheusAvailableReason --.
 	IntegrationConditionPrometheusAvailableReason string = "PrometheusAvailable"
-	// IntegrationConditionJolokiaAvailableReason --
+	// IntegrationConditionJolokiaAvailableReason --.
 	IntegrationConditionJolokiaAvailableReason string = "JolokiaAvailable"
-	// IntegrationConditionProbesAvailableReason --
+	// IntegrationConditionProbesAvailableReason --.
 	IntegrationConditionProbesAvailableReason string = "ProbesAvailable"
-	// IntegrationConditionErrorReason --
-	IntegrationConditionErrorReason string = "Error"
-	// IntegrationConditionCronJobCreatedReason --
-	IntegrationConditionCronJobCreatedReason string = "CronJobCreated"
-	// IntegrationConditionReplicaSetReadyReason --
-	IntegrationConditionReplicaSetReadyReason string = "ReplicaSetReady"
-	// IntegrationConditionReplicaSetNotReadyReason --
-	IntegrationConditionReplicaSetNotReadyReason string = "ReplicaSetNotReady"
 
-	// IntegrationConditionKameletsAvailable --
+	// IntegrationConditionKnativeServiceReadyReason --.
+	IntegrationConditionKnativeServiceReadyReason string = "KnativeServiceReady"
+	// IntegrationConditionDeploymentReadyReason --.
+	IntegrationConditionDeploymentReadyReason string = "DeploymentReady"
+	// IntegrationConditionDeploymentProgressingReason --.
+	IntegrationConditionDeploymentProgressingReason string = "DeploymentProgressing"
+	// IntegrationConditionCronJobCreatedReason --.
+	IntegrationConditionCronJobCreatedReason string = "CronJobCreated"
+	// IntegrationConditionCronJobActiveReason --.
+	IntegrationConditionCronJobActiveReason string = "CronJobActive"
+	// IntegrationConditionLastJobSucceededReason --.
+	IntegrationConditionLastJobSucceededReason string = "LastJobSucceeded"
+	// IntegrationConditionLastJobFailedReason --.
+	IntegrationConditionLastJobFailedReason string = "LastJobFailed"
+	// IntegrationConditionRuntimeNotReadyReason --.
+	IntegrationConditionRuntimeNotReadyReason string = "RuntimeNotReady"
+	// IntegrationConditionErrorReason --.
+	IntegrationConditionErrorReason string = "Error"
+
+	// IntegrationConditionInitializationFailedReason --.
+	IntegrationConditionInitializationFailedReason string = "InitializationFailed"
+	// IntegrationConditionUnsupportedLanguageReason --.
+	IntegrationConditionUnsupportedLanguageReason string = "UnsupportedLanguage"
+
+	// IntegrationConditionKameletsAvailable --.
 	IntegrationConditionKameletsAvailable IntegrationConditionType = "KameletsAvailable"
-	// IntegrationConditionKameletsAvailableReason --
+	// IntegrationConditionKameletsAvailableReason --.
 	IntegrationConditionKameletsAvailableReason string = "KameletsAvailable"
-	// IntegrationConditionKameletsNotAvailableReason --
+	// IntegrationConditionKameletsNotAvailableReason --.
 	IntegrationConditionKameletsNotAvailableReason string = "KameletsNotAvailable"
 )
 
@@ -221,29 +269,44 @@ type IntegrationCondition struct {
 	Reason string `json:"reason,omitempty"`
 	// A human-readable message indicating details about the transition.
 	Message string `json:"message,omitempty"`
+	// Pods collect health and conditions information from the owned PODs
+	Pods []PodCondition `json:"pods,omitempty"`
 }
+
+// PodSpecTemplate represent a template used to deploy an Integration `Pod`.
 type PodSpecTemplate struct {
+	// the specification
 	Spec PodSpec `json:"spec,omitempty"`
 }
 
+// PodSpec defines a group of Kubernetes resources.
 type PodSpec struct {
+	// Volumes
 	Volumes []corev1.Volume `json:"volumes,omitempty" patchStrategy:"merge,retainKeys" patchMergeKey:"name" protobuf:"bytes,1,rep,name=volumes"`
-
+	// InitContainers
 	InitContainers []corev1.Container `json:"initContainers,omitempty" patchStrategy:"merge" patchMergeKey:"name" protobuf:"bytes,20,rep,name=initContainers"`
-
+	// Containers
 	Containers []corev1.Container `json:"containers" patchStrategy:"merge" patchMergeKey:"name" protobuf:"bytes,2,rep,name=containers"`
-
+	// EphemeralContainers
 	EphemeralContainers []corev1.EphemeralContainer `json:"ephemeralContainers,omitempty" patchStrategy:"merge" patchMergeKey:"name" protobuf:"bytes,34,rep,name=ephemeralContainers"`
-
+	// RestartPolicy
 	RestartPolicy corev1.RestartPolicy `json:"restartPolicy,omitempty" protobuf:"bytes,3,opt,name=restartPolicy,casttype=RestartPolicy"`
-
+	// TerminationGracePeriodSeconds
 	TerminationGracePeriodSeconds *int64 `json:"terminationGracePeriodSeconds,omitempty" protobuf:"varint,4,opt,name=terminationGracePeriodSeconds"`
-
+	// ActiveDeadlineSeconds
 	ActiveDeadlineSeconds *int64 `json:"activeDeadlineSeconds,omitempty" protobuf:"varint,5,opt,name=activeDeadlineSeconds"`
-
+	// DNSPolicy
 	DNSPolicy corev1.DNSPolicy `json:"dnsPolicy,omitempty" protobuf:"bytes,6,opt,name=dnsPolicy,casttype=DNSPolicy"`
-
+	// NodeSelector
 	NodeSelector map[string]string `json:"nodeSelector,omitempty" protobuf:"bytes,7,rep,name=nodeSelector"`
-
+	// TopologySpreadConstraints
 	TopologySpreadConstraints []corev1.TopologySpreadConstraint `json:"topologySpreadConstraints,omitempty" patchStrategy:"merge" patchMergeKey:"topologyKey" protobuf:"bytes,33,opt,name=topologySpreadConstraints"`
+	// PodSecurityContext
+	SecurityContext corev1.PodSecurityContext `json:"securityContext,omitempty" protobuf:"bytes,34,opt,name=securityContext"`
+}
+
+type PodCondition struct {
+	Name      string                `json:"name,omitempty" yaml:"name,omitempty"`
+	Condition corev1.PodCondition   `json:"condition" yaml:"condition"`
+	Health    []HealthCheckResponse `json:"health,omitempty" yaml:"health,omitempty"`
 }

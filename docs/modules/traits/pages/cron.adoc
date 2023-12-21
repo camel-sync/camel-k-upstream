@@ -11,9 +11,12 @@ in order to save resources when the integration does not need to be executed.
 Integrations that start from the following components are evaluated by the cron trait: `timer`, `cron`, `quartz`.
 
 The rules for using a Kubernetes CronJob are the following:
-- `timer`: when periods can be written as cron expressions. E.g. `timer:tick?period=60000`.
-- `cron`, `quartz`: when the cron expression does not contain seconds (or the "seconds" part is set to 0). E.g.
-  `cron:tab?schedule=0/2${plus}*{plus}*{plus}*{plus}?` or `quartz:trigger?cron=0{plus}0/2{plus}*{plus}*{plus}*{plus}?`.
+
+  - `timer`: when period is set in milliseconds with no remaining seconds, for example 120000. If there is any second left as in 121000 (120s and 1s) or the presence of any of these parameters (delay, repeatCount, time) then a CronJob  won't be created, but a standard deployment.
+
+  - `cron`, `quartz`: when the cron expression does not contain seconds (or the "seconds" part is set to 0). E.g.
+
+    `cron:tab?schedule=0/2${plus}*{plus}*{plus}*{plus}?` or `quartz:trigger?cron=0{plus}0/2{plus}*{plus}*{plus}*{plus}?`.
 
 
 This trait is available in the following profiles: **Kubernetes, Knative, OpenShift**.
@@ -68,13 +71,24 @@ Valid values are:
 | Automatically deploy the integration as CronJob when all routes are
 either starting from a periodic consumer (only `cron`, `timer` and `quartz` are supported) or a passive consumer (e.g. `direct` is a passive consumer).
 
-It's required that all periodic consumers have the same period and it can be expressed as cron schedule (e.g. `1m` can be expressed as `0/1 * * * *`,
+It's required that all periodic consumers have the same period, and it can be expressed as cron schedule (e.g. `1m` can be expressed as `0/1 * * * *`,
 while `35m` or `50s` cannot).
 
 | cron.starting-deadline-seconds
 | int64
 | Optional deadline in seconds for starting the job if it misses scheduled
 time for any reason.  Missed jobs executions will be counted as failed ones.
+
+| cron.active-deadline-seconds
+| int64
+| Specifies the duration in seconds, relative to the start time, that the job
+may be continuously active before it is considered to be failed.
+It defaults to 60s.
+
+| cron.backoff-limit
+| int32
+| Specifies the number of retries before marking the job failed.
+It defaults to 2.
 
 |===
 

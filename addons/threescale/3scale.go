@@ -20,9 +20,12 @@ package threescale
 import (
 	"strconv"
 
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
-	"github.com/apache/camel-k/pkg/trait"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/pointer"
+
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+	traitv1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1/trait"
+	"github.com/apache/camel-k/v2/pkg/trait"
 )
 
 // The 3scale trait can be used to automatically create annotations that allow
@@ -30,66 +33,73 @@ import (
 //
 // The 3scale trait is disabled by default.
 //
-// +camel-k:trait=3scale
-type threeScaleTrait struct {
-	trait.BaseTrait `property:",squash"`
+// +camel-k:trait=3scale.
+type Trait struct {
+	traitv1.Trait `property:",squash" json:",inline"`
 	// Enables automatic configuration of the trait.
 	Auto *bool `property:"auto" json:"auto,omitempty"`
 	// The scheme to use to contact the service (default `http`)
+	// +kubebuilder:default="http"
 	Scheme string `property:"scheme" json:"scheme,omitempty"`
 	// The path where the API is published (default `/`)
+	// +kubebuilder:default="/"
 	Path string `property:"path" json:"path,omitempty"`
 	// The port where the service is exposed (default `80`)
+	// +kubebuilder:default=80
 	Port int `property:"port" json:"port,omitempty"`
 	// The path where the Open-API specification is published (default `/openapi.json`)
+	// +kubebuilder:default="/openapi.json"
 	DescriptionPath *string `property:"description-path" json:"descriptionPath,omitempty"`
 }
 
+type threeScaleTrait struct {
+	trait.BaseTrait
+	Trait `property:",squash"`
+}
+
 const (
-	// ThreeScaleSchemeAnnotation --
+	// ThreeScaleSchemeAnnotation --.
 	ThreeScaleSchemeAnnotation = "discovery.3scale.net/scheme"
-	// ThreeScaleSchemeDefaultValue --
+	// ThreeScaleSchemeDefaultValue --.
 	ThreeScaleSchemeDefaultValue = "http"
 
-	// ThreeScalePortAnnotation --
+	// ThreeScalePortAnnotation --.
 	ThreeScalePortAnnotation = "discovery.3scale.net/port"
-	// ThreeScalePortDefaultValue --
+	// ThreeScalePortDefaultValue --.
 	ThreeScalePortDefaultValue = 80
 
-	// ThreeScalePathAnnotation --
+	// ThreeScalePathAnnotation --.
 	ThreeScalePathAnnotation = "discovery.3scale.net/path"
-	// ThreeScalePathDefaultValue --
+	// ThreeScalePathDefaultValue --.
 	ThreeScalePathDefaultValue = "/"
 
-	// ThreeScaleDescriptionPathAnnotation --
+	// ThreeScaleDescriptionPathAnnotation --.
 	ThreeScaleDescriptionPathAnnotation = "discovery.3scale.net/description-path"
-	// ThreeScaleDescriptionPathDefaultValue --
+	// ThreeScaleDescriptionPathDefaultValue --.
 	ThreeScaleDescriptionPathDefaultValue = "/openapi.json"
 
-	// ThreeScaleDiscoveryLabel --
+	// ThreeScaleDiscoveryLabel --.
 	ThreeScaleDiscoveryLabel = "discovery.3scale.net"
-	// ThreeScaleDiscoveryLabelEnabled --
+	// ThreeScaleDiscoveryLabelEnabled --.
 	ThreeScaleDiscoveryLabelEnabled = "true"
 )
 
-// NewThreeScaleTrait --
+// NewThreeScaleTrait --.
 func NewThreeScaleTrait() trait.Trait {
 	return &threeScaleTrait{
 		BaseTrait: trait.NewBaseTrait("3scale", trait.TraitOrderPostProcessResources),
 	}
 }
 
-func (t *threeScaleTrait) Configure(e *trait.Environment) (bool, error) {
-	if t.Enabled == nil || !*t.Enabled {
-		// disabled by default
-		return false, nil
+func (t *threeScaleTrait) Configure(e *trait.Environment) (bool, *trait.TraitCondition, error) {
+	if e.Integration == nil || !pointer.BoolDeref(t.Enabled, false) {
+		return false, nil, nil
+	}
+	if !e.IntegrationInRunningPhases() {
+		return false, nil, nil
 	}
 
-	if !e.IntegrationInPhase(v1.IntegrationPhaseDeploying) {
-		return false, nil
-	}
-
-	if t.Auto == nil || *t.Auto {
+	if pointer.BoolDeref(t.Auto, true) {
 		if t.Scheme == "" {
 			t.Scheme = ThreeScaleSchemeDefaultValue
 		}
@@ -104,7 +114,8 @@ func (t *threeScaleTrait) Configure(e *trait.Environment) (bool, error) {
 			t.DescriptionPath = &openAPI
 		}
 	}
-	return true, nil
+
+	return true, nil, nil
 }
 
 func (t *threeScaleTrait) Apply(e *trait.Environment) error {
@@ -120,19 +131,16 @@ func (t *threeScaleTrait) addLabelsAndAnnotations(obj *metav1.ObjectMeta) {
 	}
 	obj.Labels[ThreeScaleDiscoveryLabel] = ThreeScaleDiscoveryLabelEnabled
 
-	if obj.Annotations == nil {
-		obj.Annotations = make(map[string]string)
-	}
 	if t.Scheme != "" {
-		obj.Annotations[ThreeScaleSchemeAnnotation] = t.Scheme
+		v1.SetAnnotation(obj, ThreeScaleSchemeAnnotation, t.Scheme)
 	}
 	if t.Path != "" {
-		obj.Annotations[ThreeScalePathAnnotation] = t.Path
+		v1.SetAnnotation(obj, ThreeScalePathAnnotation, t.Path)
 	}
 	if t.Port != 0 {
-		obj.Annotations[ThreeScalePortAnnotation] = strconv.Itoa(t.Port)
+		v1.SetAnnotation(obj, ThreeScalePortAnnotation, strconv.Itoa(t.Port))
 	}
 	if t.DescriptionPath != nil && *t.DescriptionPath != "" {
-		obj.Annotations[ThreeScaleDescriptionPathAnnotation] = *t.DescriptionPath
+		v1.SetAnnotation(obj, ThreeScaleDescriptionPathAnnotation, *t.DescriptionPath)
 	}
 }

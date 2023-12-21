@@ -22,9 +22,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// NewBuild --
-func NewBuild(namespace string, name string) Build {
-	return Build{
+func NewBuild(namespace string, name string) *Build {
+	return &Build{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: SchemeGroupVersion.String(),
 			Kind:       BuildKind,
@@ -36,13 +35,97 @@ func NewBuild(namespace string, name string) Build {
 	}
 }
 
-// NewBuildList --
 func NewBuildList() BuildList {
 	return BuildList{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: SchemeGroupVersion.String(),
 			Kind:       BuildKind,
 		},
+	}
+}
+
+// BuilderPodNamespace returns the namespace of the operator in charge to reconcile this Build.
+func (build *Build) BuilderPodNamespace() string {
+	for _, t := range build.Spec.Tasks {
+		if t.Builder != nil {
+			return t.Builder.Configuration.BuilderPodNamespace
+		}
+	}
+	return ""
+}
+
+// BuilderConfiguration returns the builder configuration for this Build.
+func (build *Build) BuilderConfiguration() *BuildConfiguration {
+	return build.TaskConfiguration("builder")
+}
+
+// TaskConfiguration returns the task configuration of this Build.
+func (build *Build) TaskConfiguration(name string) *BuildConfiguration {
+	return ConfigurationTasksByName(build.Spec.Tasks, name)
+}
+
+// BuilderDependencies returns the list of dependencies configured on by the builder task for this Build.
+func (build *Build) BuilderDependencies() []string {
+	if builder, ok := FindBuilderTask(build.Spec.Tasks); ok {
+		return builder.Dependencies
+	}
+
+	return []string{}
+}
+
+// FindBuilderTask returns the 1st builder task from the task list.
+func FindBuilderTask(tasks []Task) (*BuilderTask, bool) {
+	for _, t := range tasks {
+		if t.Builder != nil {
+			return t.Builder, true
+		}
+	}
+	return nil, false
+}
+
+// ConfigurationTasksByName returns the container configuration from the task list.
+func ConfigurationTasksByName(tasks []Task, name string) *BuildConfiguration {
+	for _, t := range tasks {
+		if t.Builder != nil && t.Builder.Name == name {
+			return &t.Builder.Configuration
+		}
+		if t.Custom != nil && t.Custom.Name == name {
+			return &t.Custom.Configuration
+		}
+		if t.Package != nil && t.Package.Name == name {
+			return &t.Package.Configuration
+		}
+		if t.Spectrum != nil && t.Spectrum.Name == name {
+			return &t.Spectrum.Configuration
+		}
+		if t.S2i != nil && t.S2i.Name == name {
+			return &t.S2i.Configuration
+		}
+		if t.Jib != nil && t.Jib.Name == name {
+			return &t.Jib.Configuration
+		}
+		if t.Buildah != nil && t.Buildah.Name == name {
+			return &t.Buildah.Configuration
+		}
+		if t.Kaniko != nil && t.Kaniko.Name == name {
+			return &t.Kaniko.Configuration
+		}
+	}
+	return &BuildConfiguration{}
+}
+
+// SetBuilderConfiguration set the configuration required for this Build.
+func (build *Build) SetBuilderConfiguration(conf *BuildConfiguration) {
+	SetBuilderConfigurationTasks(build.Spec.Tasks, conf)
+}
+
+// SetBuilderConfigurationTasks set the configuration required for the builder in the list of tasks.
+func SetBuilderConfigurationTasks(tasks []Task, conf *BuildConfiguration) {
+	for _, t := range tasks {
+		if t.Builder != nil {
+			t.Builder.Configuration = *conf
+			return
+		}
 	}
 }
 
@@ -67,7 +150,11 @@ func (in *BuildStatus) Failed(err error) BuildStatus {
 	return *in
 }
 
-// SetCondition --
+func (in *BuildStatus) IsFinished() bool {
+	return in.Phase == BuildPhaseSucceeded || in.Phase == BuildPhaseFailed ||
+		in.Phase == BuildPhaseInterrupted || in.Phase == BuildPhaseError
+}
+
 func (in *BuildStatus) SetCondition(condType BuildConditionType, status corev1.ConditionStatus, reason string, message string) {
 	in.SetConditions(BuildCondition{
 		Type:               condType,
@@ -79,7 +166,6 @@ func (in *BuildStatus) SetCondition(condType BuildConditionType, status corev1.C
 	})
 }
 
-// SetErrorCondition --
 func (in *BuildStatus) SetErrorCondition(condType BuildConditionType, reason string, err error) {
 	in.SetConditions(BuildCondition{
 		Type:               condType,
@@ -133,7 +219,6 @@ func (in *BuildStatus) RemoveCondition(condType BuildConditionType) {
 
 var _ ResourceCondition = BuildCondition{}
 
-// GetConditions --
 func (in *BuildStatus) GetConditions() []ResourceCondition {
 	res := make([]ResourceCondition, 0, len(in.Conditions))
 	for _, c := range in.Conditions {
@@ -142,32 +227,107 @@ func (in *BuildStatus) GetConditions() []ResourceCondition {
 	return res
 }
 
-// GetType --
 func (c BuildCondition) GetType() string {
 	return string(c.Type)
 }
 
-// GetStatus --
 func (c BuildCondition) GetStatus() corev1.ConditionStatus {
 	return c.Status
 }
 
-// GetLastUpdateTime --
 func (c BuildCondition) GetLastUpdateTime() metav1.Time {
 	return c.LastUpdateTime
 }
 
-// GetLastTransitionTime --
 func (c BuildCondition) GetLastTransitionTime() metav1.Time {
 	return c.LastTransitionTime
 }
 
-// GetReason --
 func (c BuildCondition) GetReason() string {
 	return c.Reason
 }
 
-// GetMessage --
 func (c BuildCondition) GetMessage() string {
 	return c.Message
+}
+
+func (bl BuildList) HasRunningBuilds() bool {
+	for _, b := range bl.Items {
+		if b.Status.Phase == BuildPhasePending || b.Status.Phase == BuildPhaseRunning {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (bl BuildList) HasScheduledBuildsBefore(build *Build) (bool, *Build) {
+	for _, b := range bl.Items {
+		if b.Name == build.Name {
+			continue
+		}
+
+		if (b.Status.Phase == BuildPhaseInitialization || b.Status.Phase == BuildPhaseScheduling) &&
+			b.CreationTimestamp.Before(&build.CreationTimestamp) {
+			return true, &b
+		}
+	}
+
+	return false, nil
+}
+
+// HasMatchingBuild visit all items in the list of builds and search for a scheduled build that matches the given build's dependencies.
+func (bl BuildList) HasMatchingBuild(build *Build) (bool, *Build) {
+	required := build.BuilderDependencies()
+	if len(required) == 0 {
+		return false, nil
+	}
+
+	for _, b := range bl.Items {
+		if b.Name == build.Name || b.Status.IsFinished() {
+			continue
+		}
+
+		dependencies := b.BuilderDependencies()
+		dependencyMap := make(map[string]int, len(dependencies))
+		for i, item := range dependencies {
+			dependencyMap[item] = i
+		}
+
+		allMatching := true
+		missing := 0
+		for _, item := range required {
+			if _, ok := dependencyMap[item]; !ok {
+				allMatching = false
+				missing++
+			}
+		}
+
+		// Heuristic approach: if there are too many unrelated libraries then this image is
+		// not suitable to be used as base image
+		if !allMatching && missing >= len(required)/2 {
+			continue
+		}
+
+		// handle suitable build that has started already
+		if b.Status.Phase == BuildPhasePending || b.Status.Phase == BuildPhaseRunning {
+			return true, &b
+		}
+
+		// handle suitable scheduled build
+		if b.Status.Phase == BuildPhaseInitialization || b.Status.Phase == BuildPhaseScheduling {
+			if allMatching && len(required) == len(dependencies) {
+				// seems like both builds require exactly the same list of dependencies
+				// additionally check for the creation timestamp
+				if b.CreationTimestamp.Before(&build.CreationTimestamp) {
+					return true, &b
+				}
+			} else if missing > 0 {
+				// found another suitable scheduled build with fewer dependencies that should build first in order to reuse the produced image
+				return true, &b
+			}
+		}
+	}
+
+	return false, nil
 }

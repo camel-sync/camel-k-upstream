@@ -18,35 +18,56 @@ limitations under the License.
 package trait
 
 import (
-	"context"
 	"testing"
 
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
 	"github.com/stretchr/testify/assert"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/pointer"
 )
 
-func TestConfigureGarbageCollectorTraitDoesSucceed(t *testing.T) {
-	gcTrait, environment := createNominalGarbageCollectorTest()
-	configured, err := gcTrait.Configure(environment)
+func TestConfigureGCTraitDoesSucceed(t *testing.T) {
+	gcTrait, environment := createNominalGCTest()
+	configured, condition, err := gcTrait.Configure(environment)
 
 	assert.True(t, configured)
 	assert.Nil(t, err)
+	assert.Nil(t, condition)
+
 }
 
-func TestConfigureDisabledGarbageCollectorTraitDoesNotSucceed(t *testing.T) {
-	gcTrait, environment := createNominalGarbageCollectorTest()
-	gcTrait.Enabled = BoolP(false)
+func TestConfigureDisabledGCTraitDoesNotSucceed(t *testing.T) {
+	gcTrait, environment := createNominalGCTest()
+	gcTrait.Enabled = pointer.Bool(false)
 
-	configured, err := gcTrait.Configure(environment)
-
+	expectedCondition := NewIntegrationCondition(
+		v1.IntegrationConditionTraitInfo,
+		corev1.ConditionTrue,
+		"TraitConfiguration",
+		"explicitly disabled by the user",
+	)
+	configured, condition, err := gcTrait.Configure(environment)
 	assert.False(t, configured)
 	assert.Nil(t, err)
+	assert.NotNil(t, condition)
+	assert.Equal(t, expectedCondition, condition)
 }
 
-func TestApplyGarbageCollectorTraitDoesSucceed(t *testing.T) {
-	gcTrait, environment := createNominalGarbageCollectorTest()
+func TestApplyGarbageCollectorTraitFirstGenerationDoesSucceed(t *testing.T) {
+	gcTrait, environment := createNominalGCTest()
+
+	err := gcTrait.Apply(environment)
+
+	assert.Nil(t, err)
+	assert.Len(t, environment.PostProcessors, 1)
+	assert.Len(t, environment.PostActions, 0)
+}
+
+func TestApplyGarbageCollectorTraitNextGenerationDoesSucceed(t *testing.T) {
+	gcTrait, environment := createNominalGCTest()
+	environment.Integration.Generation = 2
 
 	err := gcTrait.Apply(environment)
 
@@ -55,8 +76,8 @@ func TestApplyGarbageCollectorTraitDoesSucceed(t *testing.T) {
 	assert.Len(t, environment.PostActions, 1)
 }
 
-func TestApplyGarbageCollectorTraitDuringInitializationPhaseSkipPostActions(t *testing.T) {
-	gcTrait, environment := createNominalGarbageCollectorTest()
+func TestApplyGCTraitDuringInitializationPhaseSkipPostActions(t *testing.T) {
+	gcTrait, environment := createNominalGCTest()
 	environment.Integration.Status.Phase = v1.IntegrationPhaseInitialization
 
 	err := gcTrait.Apply(environment)
@@ -66,15 +87,16 @@ func TestApplyGarbageCollectorTraitDuringInitializationPhaseSkipPostActions(t *t
 	assert.Len(t, environment.PostActions, 0)
 }
 
-func createNominalGarbageCollectorTest() (*garbageCollectorTrait, *Environment) {
-	trait := newGarbageCollectorTrait().(*garbageCollectorTrait)
-	trait.Enabled = BoolP(true)
+func createNominalGCTest() (*gcTrait, *Environment) {
+	trait, _ := newGCTrait().(*gcTrait)
+	trait.Enabled = pointer.Bool(true)
 
 	environment := &Environment{
-		Catalog: NewCatalog(context.TODO(), nil),
+		Catalog: NewCatalog(nil),
 		Integration: &v1.Integration{
 			ObjectMeta: metav1.ObjectMeta{
-				Name: "integration-name",
+				Name:       "integration-name",
+				Generation: 1,
 			},
 			Status: v1.IntegrationStatus{
 				Phase: v1.IntegrationPhaseRunning,

@@ -27,6 +27,7 @@ import (
 
 func TestDefaultBaseImage(t *testing.T) {
 	assert.NotEmpty(t, BaseImage())
+	assert.True(t, IsBaseImageDefault())
 }
 
 func TestOverriddenBaseImage(t *testing.T) {
@@ -35,6 +36,7 @@ func TestOverriddenBaseImage(t *testing.T) {
 	overriddenImage := "xxx"
 	assert.NoError(t, os.Setenv(env, overriddenImage))
 	assert.Equal(t, overriddenImage, BaseImage())
+	assert.False(t, IsBaseImageDefault())
 	assert.NoError(t, os.Setenv(env, oldEnvVal))
 }
 
@@ -47,5 +49,14 @@ func TestOverriddenInstallDefaultKamelets(t *testing.T) {
 	assert.True(t, InstallDefaultKamelets())
 	assert.NoError(t, os.Setenv(env, "wrongval"))
 	assert.False(t, InstallDefaultKamelets())
+	assert.NoError(t, os.Setenv(env, oldEnvVal))
+}
+
+func TestOverriddenOperatorID(t *testing.T) {
+	env := "KAMEL_OPERATOR_ID"
+	oldEnvVal := os.Getenv(env)
+	overriddenID := "operator-1"
+	assert.NoError(t, os.Setenv(env, overriddenID))
+	assert.Equal(t, overriddenID, OperatorID())
 	assert.NoError(t, os.Setenv(env, oldEnvVal))
 }

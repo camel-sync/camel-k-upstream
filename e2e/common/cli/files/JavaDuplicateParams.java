@@ -1,4 +1,4 @@
-// camel-k: language=java trait=tracing.enabled=false trait=affinity.enabled=true property=prop1=false property=foo=bar
+// camel-k: language=java trait=telemetry.enabled=false trait=affinity.enabled=true property=prop1=false property=foo=bar
 
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
@@ -20,11 +20,11 @@
 import org.apache.camel.builder.RouteBuilder;
 
 public class JavaDuplicateParams extends RouteBuilder {
-  @Override
-  public void configure() throws Exception {
-	  from("timer:tick")
-	  .setHeader("m").constant("string!")
-	  .setBody().simple("Magic${header.m}")
-      .log("${body}");
-  }
+    @Override
+    public void configure() throws Exception {
+        from("timer:tick")
+            .setHeader("m").constant("string!")
+            .setBody().simple("Magic${header.m}")
+            .log("${body}");
+    }
 }

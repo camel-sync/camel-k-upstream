@@ -24,28 +24,31 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/pointer"
 
 	ctrl "sigs.k8s.io/controller-runtime/pkg/client"
 
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
-	"github.com/apache/camel-k/pkg/util/camel"
-	"github.com/apache/camel-k/pkg/util/kubernetes"
-	"github.com/apache/camel-k/pkg/util/test"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+	traitv1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1/trait"
+	"github.com/apache/camel-k/v2/pkg/util/camel"
+	"github.com/apache/camel-k/v2/pkg/util/kubernetes"
+	"github.com/apache/camel-k/v2/pkg/util/test"
 )
 
 func TestContainerWithDefaults(t *testing.T) {
 	catalog, err := camel.DefaultCatalog()
 	assert.Nil(t, err)
 
-	traitCatalog := NewCatalog(context.TODO(), nil)
+	client, _ := test.NewFakeClient()
+	traitCatalog := NewCatalog(nil)
 
 	environment := Environment{
 		CamelCatalog: catalog,
 		Catalog:      traitCatalog,
+		Client:       client,
 		Integration: &v1.Integration{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      ServiceTestName,
@@ -69,7 +72,11 @@ func TestContainerWithDefaults(t *testing.T) {
 				Build: v1.IntegrationPlatformBuildSpec{
 					PublishStrategy: v1.IntegrationPlatformBuildPublishStrategyS2I,
 					Registry:        v1.RegistrySpec{Address: "registry"},
+					RuntimeVersion:  catalog.Runtime.Version,
 				},
+			},
+			Status: v1.IntegrationPlatformStatus{
+				Phase: v1.IntegrationPlatformPhaseReady,
 			},
 		},
 		EnvVars:        make([]corev1.EnvVar, 0),
@@ -78,9 +85,10 @@ func TestContainerWithDefaults(t *testing.T) {
 	}
 	environment.Platform.ResyncStatusFullConfig()
 
-	err = traitCatalog.apply(&environment)
+	conditions, err := traitCatalog.apply(&environment)
 
 	assert.Nil(t, err)
+	assert.Empty(t, conditions)
 	assert.NotEmpty(t, environment.ExecutedTraits)
 	assert.NotNil(t, environment.GetTrait("deployment"))
 	assert.NotNil(t, environment.GetTrait("container"))
@@ -92,15 +100,99 @@ func TestContainerWithDefaults(t *testing.T) {
 	assert.Equal(t, defaultContainerName, d.Spec.Template.Spec.Containers[0].Name)
 }
 
-func TestContainerWithCustomName(t *testing.T) {
+func TestContainerWithOpenshift(t *testing.T) {
 	catalog, err := camel.DefaultCatalog()
 	assert.Nil(t, err)
 
-	traitCatalog := NewCatalog(context.TODO(), nil)
+	// Integration is in another constrained namespace
+	constrainedIntNamespace := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "myuser",
+			Annotations: map[string]string{
+				"openshift.io/sa.scc.mcs":                 "s0:c26,c5",
+				"openshift.io/sa.scc.supplemental-groups": "1000860000/10000",
+				"openshift.io/sa.scc.uid-range":           "1000860000/10000",
+			},
+		},
+	}
+
+	client, _ := test.NewFakeClient(constrainedIntNamespace)
+	traitCatalog := NewCatalog(nil)
+
+	// enable openshift
+	fakeClient := client.(*test.FakeClient) //nolint
+	fakeClient.EnableOpenshiftDiscovery()
 
 	environment := Environment{
 		CamelCatalog: catalog,
 		Catalog:      traitCatalog,
+		Client:       client,
+		Integration: &v1.Integration{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      ServiceTestName,
+				Namespace: "myuser",
+			},
+			Status: v1.IntegrationStatus{
+				Phase: v1.IntegrationPhaseDeploying,
+			},
+			Spec: v1.IntegrationSpec{
+				Profile: v1.TraitProfileKubernetes,
+			},
+		},
+		IntegrationKit: &v1.IntegrationKit{
+			Status: v1.IntegrationKitStatus{
+				Phase: v1.IntegrationKitPhaseReady,
+			},
+		},
+		Platform: &v1.IntegrationPlatform{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "ns",
+			},
+			Spec: v1.IntegrationPlatformSpec{
+				Cluster: v1.IntegrationPlatformClusterOpenShift,
+				Build: v1.IntegrationPlatformBuildSpec{
+					PublishStrategy: v1.IntegrationPlatformBuildPublishStrategyS2I,
+					Registry:        v1.RegistrySpec{Address: "registry"},
+					RuntimeVersion:  catalog.Runtime.Version,
+				},
+			},
+			Status: v1.IntegrationPlatformStatus{
+				Phase: v1.IntegrationPlatformPhaseReady,
+			},
+		},
+		EnvVars:        make([]corev1.EnvVar, 0),
+		ExecutedTraits: make([]Trait, 0),
+		Resources:      kubernetes.NewCollection(),
+	}
+	environment.Platform.ResyncStatusFullConfig()
+
+	conditions, err := traitCatalog.apply(&environment)
+
+	assert.Nil(t, err)
+	assert.Empty(t, conditions)
+	assert.NotEmpty(t, environment.ExecutedTraits)
+	assert.NotNil(t, environment.GetTrait("deployment"))
+	assert.NotNil(t, environment.GetTrait("container"))
+
+	d := environment.Resources.GetDeploymentForIntegration(environment.Integration)
+
+	assert.NotNil(t, d)
+	assert.Len(t, d.Spec.Template.Spec.Containers, 1)
+	assert.Equal(t, defaultContainerName, d.Spec.Template.Spec.Containers[0].Name)
+	assert.Equal(t, pointer.Bool(true), d.Spec.Template.Spec.Containers[0].SecurityContext.RunAsNonRoot)
+	assert.Equal(t, pointer.Int64(1000860000), d.Spec.Template.Spec.Containers[0].SecurityContext.RunAsUser)
+}
+
+func TestContainerWithCustomName(t *testing.T) {
+	catalog, err := camel.DefaultCatalog()
+	assert.Nil(t, err)
+
+	client, _ := test.NewFakeClient()
+	traitCatalog := NewCatalog(nil)
+	environment := Environment{
+		CamelCatalog: catalog,
+		Catalog:      traitCatalog,
+		Client:       client,
 		Integration: &v1.Integration{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      ServiceTestName,
@@ -111,10 +203,10 @@ func TestContainerWithCustomName(t *testing.T) {
 			},
 			Spec: v1.IntegrationSpec{
 				Profile: v1.TraitProfileKubernetes,
-				Traits: map[string]v1.TraitSpec{
-					"container": test.TraitSpecFromMap(t, map[string]interface{}{
-						"name": "my-container-name",
-					}),
+				Traits: v1.Traits{
+					Container: &traitv1.ContainerTrait{
+						Name: "my-container-name",
+					},
 				},
 			},
 		},
@@ -129,7 +221,11 @@ func TestContainerWithCustomName(t *testing.T) {
 				Build: v1.IntegrationPlatformBuildSpec{
 					PublishStrategy: v1.IntegrationPlatformBuildPublishStrategyS2I,
 					Registry:        v1.RegistrySpec{Address: "registry"},
+					RuntimeVersion:  catalog.Runtime.Version,
 				},
+			},
+			Status: v1.IntegrationPlatformStatus{
+				Phase: v1.IntegrationPlatformPhaseReady,
 			},
 		},
 		EnvVars:        make([]corev1.EnvVar, 0),
@@ -138,9 +234,10 @@ func TestContainerWithCustomName(t *testing.T) {
 	}
 	environment.Platform.ResyncStatusFullConfig()
 
-	err = traitCatalog.apply(&environment)
+	conditions, err := traitCatalog.apply(&environment)
 
 	assert.Nil(t, err)
+	assert.Empty(t, conditions)
 	assert.NotEmpty(t, environment.ExecutedTraits)
 	assert.NotNil(t, environment.GetTrait("deployment"))
 	assert.NotNil(t, environment.GetTrait("container"))
@@ -150,8 +247,8 @@ func TestContainerWithCustomName(t *testing.T) {
 	assert.NotNil(t, d)
 	assert.Len(t, d.Spec.Template.Spec.Containers, 1)
 
-	trait := test.TraitSpecToMap(t, environment.Integration.Spec.Traits["container"])
-	assert.Equal(t, trait["name"], d.Spec.Template.Spec.Containers[0].Name)
+	trait := environment.Integration.Spec.Traits.Container
+	assert.Equal(t, trait.Name, d.Spec.Template.Spec.Containers[0].Name)
 }
 
 func TestContainerWithCustomImage(t *testing.T) {
@@ -159,10 +256,10 @@ func TestContainerWithCustomImage(t *testing.T) {
 	assert.Nil(t, err)
 
 	client, _ := test.NewFakeClient()
-	traitCatalog := NewCatalog(context.TODO(), nil)
+	traitCatalog := NewCatalog(nil)
 
 	environment := Environment{
-		C:            context.TODO(),
+		Ctx:          context.TODO(),
 		Client:       client,
 		CamelCatalog: catalog,
 		Catalog:      traitCatalog,
@@ -177,10 +274,10 @@ func TestContainerWithCustomImage(t *testing.T) {
 			},
 			Spec: v1.IntegrationSpec{
 				Profile: v1.TraitProfileKubernetes,
-				Traits: map[string]v1.TraitSpec{
-					"container": test.TraitSpecFromMap(t, map[string]interface{}{
-						"image": "foo/bar:1.0.0",
-					}),
+				Traits: v1.Traits{
+					Container: &traitv1.ContainerTrait{
+						Image: "foo/bar:1.0.0",
+					},
 				},
 			},
 		},
@@ -190,7 +287,11 @@ func TestContainerWithCustomImage(t *testing.T) {
 				Build: v1.IntegrationPlatformBuildSpec{
 					PublishStrategy: v1.IntegrationPlatformBuildPublishStrategyS2I,
 					Registry:        v1.RegistrySpec{Address: "registry"},
+					RuntimeVersion:  catalog.Runtime.Version,
 				},
+			},
+			Status: v1.IntegrationPlatformStatus{
+				Phase: v1.IntegrationPlatformPhaseReady,
 			},
 		},
 		EnvVars:        make([]corev1.EnvVar, 0),
@@ -199,8 +300,10 @@ func TestContainerWithCustomImage(t *testing.T) {
 	}
 	environment.Platform.ResyncStatusFullConfig()
 
-	err = traitCatalog.apply(&environment)
+	conditions, err := traitCatalog.apply(&environment)
+
 	assert.Nil(t, err)
+	assert.Empty(t, conditions)
 
 	for _, postAction := range environment.PostActions {
 		assert.Nil(t, postAction(&environment))
@@ -221,8 +324,8 @@ func TestContainerWithCustomImage(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, environment.Integration.ObjectMeta.UID, ikt.ObjectMeta.OwnerReferences[0].UID)
 
-	trait := test.TraitSpecToMap(t, environment.Integration.Spec.Traits["container"])
-	assert.Equal(t, trait["image"], ikt.Spec.Image)
+	trait := environment.Integration.Spec.Traits.Container
+	assert.Equal(t, trait.Image, ikt.Spec.Image)
 }
 
 func TestContainerWithCustomImageAndIntegrationKit(t *testing.T) {
@@ -230,10 +333,10 @@ func TestContainerWithCustomImageAndIntegrationKit(t *testing.T) {
 	assert.Nil(t, err)
 
 	client, _ := test.NewFakeClient()
-	traitCatalog := NewCatalog(context.TODO(), nil)
+	traitCatalog := NewCatalog(nil)
 
 	environment := Environment{
-		C:            context.TODO(),
+		Ctx:          context.TODO(),
 		Client:       client,
 		CamelCatalog: catalog,
 		Catalog:      traitCatalog,
@@ -248,10 +351,10 @@ func TestContainerWithCustomImageAndIntegrationKit(t *testing.T) {
 			},
 			Spec: v1.IntegrationSpec{
 				Profile: v1.TraitProfileKubernetes,
-				Traits: map[string]v1.TraitSpec{
-					"container": test.TraitSpecFromMap(t, map[string]interface{}{
-						"image": "foo/bar:1.0.0",
-					}),
+				Traits: v1.Traits{
+					Container: &traitv1.ContainerTrait{
+						Image: "foo/bar:1.0.0",
+					},
 				},
 				IntegrationKit: &corev1.ObjectReference{
 					Name:      "bad-" + ServiceTestName,
@@ -265,7 +368,11 @@ func TestContainerWithCustomImageAndIntegrationKit(t *testing.T) {
 				Build: v1.IntegrationPlatformBuildSpec{
 					PublishStrategy: v1.IntegrationPlatformBuildPublishStrategyS2I,
 					Registry:        v1.RegistrySpec{Address: "registry"},
+					RuntimeVersion:  catalog.Runtime.Version,
 				},
+			},
+			Status: v1.IntegrationPlatformStatus{
+				Phase: v1.IntegrationPlatformPhaseReady,
 			},
 		},
 		EnvVars:        make([]corev1.EnvVar, 0),
@@ -274,79 +381,148 @@ func TestContainerWithCustomImageAndIntegrationKit(t *testing.T) {
 	}
 	environment.Platform.ResyncStatusFullConfig()
 
-	err = traitCatalog.apply(&environment)
+	conditions, err := traitCatalog.apply(&environment)
 	assert.NotNil(t, err)
-	assert.Contains(t, err.Error(), "unsupported configuration: a container image has been set in conjunction with an IntegrationKit")
-}
-
-func TestContainerWithCustomImageAndDeprecatedIntegrationKit(t *testing.T) {
-	catalog, err := camel.DefaultCatalog()
-	assert.Nil(t, err)
-
-	client, _ := test.NewFakeClient()
-	traitCatalog := NewCatalog(context.TODO(), nil)
-
-	environment := Environment{
-		C:            context.TODO(),
-		Client:       client,
-		CamelCatalog: catalog,
-		Catalog:      traitCatalog,
-		Integration: &v1.Integration{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      ServiceTestName,
-				Namespace: "ns",
-				UID:       types.UID(uuid.NewString()),
-			},
-			Status: v1.IntegrationStatus{
-				Phase: v1.IntegrationPhaseInitialization,
-			},
-			Spec: v1.IntegrationSpec{
-				Profile: v1.TraitProfileKubernetes,
-				Traits: map[string]v1.TraitSpec{
-					"container": test.TraitSpecFromMap(t, map[string]interface{}{
-						"image": "foo/bar:1.0.0",
-					}),
-				},
-				Kit: "bad-" + ServiceTestName,
-			},
-		},
-		Platform: &v1.IntegrationPlatform{
-			Spec: v1.IntegrationPlatformSpec{
-				Cluster: v1.IntegrationPlatformClusterOpenShift,
-				Build: v1.IntegrationPlatformBuildSpec{
-					PublishStrategy: v1.IntegrationPlatformBuildPublishStrategyS2I,
-					Registry:        v1.RegistrySpec{Address: "registry"},
-				},
-			},
-		},
-		EnvVars:        make([]corev1.EnvVar, 0),
-		ExecutedTraits: make([]Trait, 0),
-		Resources:      kubernetes.NewCollection(),
-	}
-	environment.Platform.ResyncStatusFullConfig()
-
-	err = traitCatalog.apply(&environment)
-	assert.NotNil(t, err)
+	assert.Empty(t, conditions)
 	assert.Contains(t, err.Error(), "unsupported configuration: a container image has been set in conjunction with an IntegrationKit")
 }
 
 func TestContainerWithImagePullPolicy(t *testing.T) {
-	target := appsv1.Deployment{}
-
-	env := newTestProbesEnv(t, v1.RuntimeProviderQuarkus)
-	env.Integration.Status.Phase = v1.IntegrationPhaseDeploying
-	env.Resources.Add(&target)
-
-	ctr := newTestContainerTrait()
-	ctr.ImagePullPolicy = "Always"
-
-	err := ctr.Apply(&env)
+	catalog, err := camel.DefaultCatalog()
 	assert.Nil(t, err)
-	assert.Equal(t, corev1.PullAlways, target.Spec.Template.Spec.Containers[0].ImagePullPolicy)
 
-	ctr.ImagePullPolicy = "MustFail"
+	client, _ := test.NewFakeClient()
+	traitCatalog := NewCatalog(nil)
 
-	ok, err := ctr.Configure(&env)
-	assert.False(t, ok)
+	environment := Environment{
+		Ctx:          context.TODO(),
+		Client:       client,
+		CamelCatalog: catalog,
+		Catalog:      traitCatalog,
+		Integration: &v1.Integration{
+			Spec: v1.IntegrationSpec{
+				Profile: v1.TraitProfileKubernetes,
+				Traits: v1.Traits{
+					Container: &traitv1.ContainerTrait{
+						ImagePullPolicy: "Always",
+					},
+				},
+			},
+		},
+		Platform: &v1.IntegrationPlatform{
+			Spec: v1.IntegrationPlatformSpec{
+				Build: v1.IntegrationPlatformBuildSpec{
+					RuntimeVersion: catalog.Runtime.Version,
+				},
+			},
+			Status: v1.IntegrationPlatformStatus{
+				Phase: v1.IntegrationPlatformPhaseReady,
+			},
+		},
+		Resources: kubernetes.NewCollection(),
+	}
+	environment.Integration.Status.Phase = v1.IntegrationPhaseDeploying
+	environment.Platform.ResyncStatusFullConfig()
+
+	conditions, err := traitCatalog.apply(&environment)
+
+	assert.Nil(t, err)
+	assert.Empty(t, conditions)
+
+	container := environment.GetIntegrationContainer()
+
+	assert.Equal(t, corev1.PullAlways, container.ImagePullPolicy)
+}
+
+func TestRunKnativeEndpointWithKnativeNotInstalled(t *testing.T) {
+	environment := createEnvironment()
+	trait, _ := newContainerTrait().(*containerTrait)
+	environment.Integration.Spec.Sources = []v1.SourceSpec{
+		{
+			DataSpec: v1.DataSpec{
+				Name: "test.java",
+				Content: `
+				from("knative:channel/test").to("log:${body};
+			`,
+			},
+			Language: v1.LanguageJavaSource,
+		},
+	}
+	expectedCondition := NewIntegrationCondition(
+		v1.IntegrationConditionKnativeAvailable,
+		corev1.ConditionFalse,
+		v1.IntegrationConditionKnativeNotInstalledReason,
+		"integration cannot run, as knative is not installed in the cluster",
+	)
+	configured, condition, err := trait.Configure(environment)
 	assert.NotNil(t, err)
+	assert.Equal(t, expectedCondition, condition)
+	assert.False(t, configured)
+}
+
+func TestRunNonKnativeEndpointWithKnativeNotInstalled(t *testing.T) {
+
+	environment := createEnvironment()
+	trait, _ := newContainerTrait().(*containerTrait)
+	environment.Integration.Spec.Sources = []v1.SourceSpec{
+		{
+			DataSpec: v1.DataSpec{
+				Name: "test.java",
+				Content: `
+				from("platform-http://my-site").to("log:${body}");
+			`,
+			},
+			Language: v1.LanguageJavaSource,
+		},
+	}
+
+	configured, condition, err := trait.Configure(environment)
+	assert.Nil(t, err)
+	assert.Nil(t, condition)
+	assert.True(t, configured)
+	conditions := environment.Integration.Status.Conditions
+	assert.Len(t, conditions, 0)
+}
+
+func createEnvironment() *Environment {
+
+	client, _ := test.NewFakeClient()
+	// disable the knative service api
+	fakeClient := client.(*test.FakeClient) //nolint
+	fakeClient.DisableAPIGroupDiscovery("serving.knative.dev/v1")
+
+	replicas := int32(3)
+	catalog, _ := camel.QuarkusCatalog()
+
+	environment := &Environment{
+		CamelCatalog: catalog,
+		Catalog:      NewCatalog(nil),
+		Client:       client,
+		Integration: &v1.Integration{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "integration-name",
+			},
+			Spec: v1.IntegrationSpec{
+				Replicas: &replicas,
+				Traits:   v1.Traits{},
+			},
+			Status: v1.IntegrationStatus{
+				Phase: v1.IntegrationPhaseInitialization,
+			},
+		},
+		Platform: &v1.IntegrationPlatform{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "namespace",
+			},
+			Spec: v1.IntegrationPlatformSpec{
+				Cluster: v1.IntegrationPlatformClusterKubernetes,
+				Profile: v1.TraitProfileKubernetes,
+			},
+		},
+		Resources:             kubernetes.NewCollection(),
+		ApplicationProperties: make(map[string]string),
+	}
+	environment.Platform.ResyncStatusFullConfig()
+
+	return environment
 }

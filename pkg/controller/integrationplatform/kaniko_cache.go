@@ -21,16 +21,14 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/pkg/errors"
-
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
-	"github.com/apache/camel-k/pkg/builder"
-	"github.com/apache/camel-k/pkg/client"
-	"github.com/apache/camel-k/pkg/util/defaults"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+	"github.com/apache/camel-k/v2/pkg/builder"
+	"github.com/apache/camel-k/v2/pkg/client"
+	"github.com/apache/camel-k/v2/pkg/util/defaults"
 )
 
 func createKanikoCacheWarmerPod(ctx context.Context, client client.Client, platform *v1.IntegrationPlatform) error {
@@ -40,6 +38,15 @@ func createKanikoCacheWarmerPod(ctx context.Context, client client.Client, platf
 	// See:
 	// - https://kubernetes.io/docs/concepts/storage/persistent-volumes/#node-affinity
 	// - https://kubernetes.io/docs/concepts/storage/volumes/#local
+	pvcName := platform.Status.Build.PublishStrategyOptions[builder.KanikoPVCName]
+
+	var warmerImage string
+	if image, found := platform.Status.Build.PublishStrategyOptions[builder.KanikoWarmerImage]; found {
+		warmerImage = image
+	} else {
+		warmerImage = fmt.Sprintf("%s:v%s", builder.KanikoDefaultWarmerImageName, defaults.KanikoVersion)
+	}
+
 	pod := corev1.Pod{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: corev1.SchemeGroupVersion.String(),
@@ -56,7 +63,7 @@ func createKanikoCacheWarmerPod(ctx context.Context, client client.Client, platf
 			Containers: []corev1.Container{
 				{
 					Name:  "warm-kaniko-cache",
-					Image: fmt.Sprintf("gcr.io/kaniko-project/warmer:v%s", defaults.KanikoVersion),
+					Image: warmerImage,
 					Args: []string{
 						"--cache-dir=" + builder.KanikoCacheDir,
 						"--image=" + platform.Status.Build.BaseImage,
@@ -91,7 +98,7 @@ func createKanikoCacheWarmerPod(ctx context.Context, client client.Client, platf
 					Name: "kaniko-cache",
 					VolumeSource: corev1.VolumeSource{
 						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-							ClaimName: platform.Status.Build.PersistentVolumeClaim,
+							ClaimName: pvcName,
 						},
 					},
 				},
@@ -101,12 +108,12 @@ func createKanikoCacheWarmerPod(ctx context.Context, client client.Client, platf
 
 	err := client.Delete(ctx, &pod)
 	if err != nil && !apierrors.IsNotFound(err) {
-		return errors.Wrap(err, "cannot delete Kaniko warmer pod")
+		return fmt.Errorf("cannot delete Kaniko warmer pod: %w", err)
 	}
 
 	err = client.Create(ctx, &pod)
 	if err != nil {
-		return errors.Wrap(err, "cannot create Kaniko warmer pod")
+		return fmt.Errorf("cannot create Kaniko warmer pod: %w", err)
 	}
 
 	return nil

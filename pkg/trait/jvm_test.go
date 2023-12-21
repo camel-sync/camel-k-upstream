@@ -18,61 +18,61 @@ limitations under the License.
 package trait
 
 import (
-	"context"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
 
-	"github.com/scylladb/go-set/strset"
 	"github.com/stretchr/testify/assert"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/pointer"
 
 	serving "knative.dev/serving/pkg/apis/serving/v1"
 
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
-	"github.com/apache/camel-k/pkg/builder"
-	"github.com/apache/camel-k/pkg/util/camel"
-	"github.com/apache/camel-k/pkg/util/kubernetes"
-	"github.com/apache/camel-k/pkg/util/test"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+	"github.com/apache/camel-k/v2/pkg/builder"
+	"github.com/apache/camel-k/v2/pkg/util/camel"
+	"github.com/apache/camel-k/v2/pkg/util/kubernetes"
+	"github.com/apache/camel-k/v2/pkg/util/sets"
+	"github.com/apache/camel-k/v2/pkg/util/test"
+)
+
+var (
+	crMountPath = filepath.ToSlash(camel.ConfigResourcesMountPath)
+	rdMountPath = filepath.ToSlash(camel.ResourcesDefaultMountPath)
 )
 
 func TestConfigureJvmTraitInRightPhasesDoesSucceed(t *testing.T) {
 	trait, environment := createNominalJvmTest(v1.IntegrationKitTypePlatform)
 
-	configured, err := trait.Configure(environment)
+	configured, condition, err := trait.Configure(environment)
 	assert.Nil(t, err)
 	assert.True(t, configured)
+	assert.Nil(t, condition)
 }
 
 func TestConfigureJvmTraitInWrongIntegrationPhaseDoesNotSucceed(t *testing.T) {
 	trait, environment := createNominalJvmTest(v1.IntegrationKitTypePlatform)
 	environment.Integration.Status.Phase = v1.IntegrationPhaseError
 
-	configured, err := trait.Configure(environment)
+	configured, condition, err := trait.Configure(environment)
 	assert.Nil(t, err)
 	assert.True(t, configured)
+	assert.Nil(t, condition)
 }
 
 func TestConfigureJvmTraitInWrongIntegrationKitPhaseDoesNotSucceed(t *testing.T) {
 	trait, environment := createNominalJvmTest(v1.IntegrationKitTypePlatform)
 	environment.IntegrationKit.Status.Phase = v1.IntegrationKitPhaseWaitingForPlatform
 
-	configured, err := trait.Configure(environment)
+	configured, condition, err := trait.Configure(environment)
 	assert.Nil(t, err)
 	assert.False(t, configured)
-}
-
-func TestConfigureJvmDisabledTraitDoesNotSucceed(t *testing.T) {
-	trait, environment := createNominalJvmTest(v1.IntegrationKitTypePlatform)
-	trait.Enabled = BoolP(false)
-
-	configured, err := trait.Configure(environment)
-	assert.Nil(t, err)
-	assert.False(t, configured)
+	assert.Nil(t, condition)
 }
 
 func TestApplyJvmTraitWithDeploymentResource(t *testing.T) {
@@ -103,12 +103,14 @@ func TestApplyJvmTraitWithDeploymentResource(t *testing.T) {
 
 	assert.Nil(t, err)
 
-	cp := strset.New("./resources", configResourcesMountPath, resourcesDefaultMountPath, "/mount/path").List()
+	s := sets.NewSet()
+	s.Add("./resources", crMountPath, rdMountPath, "/mount/path")
+	cp := s.List()
 	sort.Strings(cp)
 
 	assert.Equal(t, []string{
 		"-cp",
-		fmt.Sprintf("./resources:%s:%s:/mount/path", configResourcesMountPath, resourcesDefaultMountPath),
+		fmt.Sprintf("./resources:%s:%s:/mount/path", crMountPath, rdMountPath),
 		"io.quarkus.bootstrap.runner.QuarkusEntryPoint",
 	}, d.Spec.Template.Spec.Containers[0].Args)
 }
@@ -135,20 +137,22 @@ func TestApplyJvmTraitWithKNativeResource(t *testing.T) {
 
 	assert.Nil(t, err)
 
-	cp := strset.New("./resources", configResourcesMountPath, resourcesDefaultMountPath, "/mount/path").List()
+	st := sets.NewSet()
+	st.Add("./resources", crMountPath, rdMountPath, "/mount/path")
+	cp := st.List()
 	sort.Strings(cp)
 
 	assert.Equal(t, []string{
 		"-cp",
-		fmt.Sprintf("./resources:%s:%s:/mount/path", configResourcesMountPath, resourcesDefaultMountPath),
+		fmt.Sprintf("./resources:%s:%s:/mount/path", crMountPath, rdMountPath),
 		"io.quarkus.bootstrap.runner.QuarkusEntryPoint",
 	}, s.Spec.Template.Spec.Containers[0].Args)
 }
 
 func TestApplyJvmTraitWithDebugEnabled(t *testing.T) {
 	trait, environment := createNominalJvmTest(v1.IntegrationKitTypePlatform)
-	trait.Debug = BoolP(true)
-	trait.DebugSuspend = BoolP(true)
+	trait.Debug = pointer.Bool(true)
+	trait.DebugSuspend = pointer.Bool(true)
 
 	d := appsv1.Deployment{
 		Spec: appsv1.DeploymentSpec{
@@ -202,7 +206,7 @@ func TestApplyJvmTraitWithExternalKitType(t *testing.T) {
 	err := trait.Apply(environment)
 	assert.Nil(t, err)
 
-	container := environment.getIntegrationContainer()
+	container := environment.GetIntegrationContainer()
 
 	assert.Equal(t, 3, len(container.Args))
 	assert.Equal(t, "-cp", container.Args[0])
@@ -244,7 +248,7 @@ func TestApplyJvmTraitWithClasspath(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, []string{
 		"-cp",
-		fmt.Sprintf("./resources:%s:%s:/mount/path:%s:%s", configResourcesMountPath, resourcesDefaultMountPath,
+		fmt.Sprintf("./resources:%s:%s:/mount/path:%s:%s", crMountPath, rdMountPath,
 			"/path/to/another/dep.jar", "/path/to/my-dep.jar"),
 		"io.quarkus.bootstrap.runner.QuarkusEntryPoint",
 	}, d.Spec.Template.Spec.Containers[0].Args)
@@ -252,17 +256,13 @@ func TestApplyJvmTraitWithClasspath(t *testing.T) {
 
 func createNominalJvmTest(kitType string) (*jvmTrait, *Environment) {
 	catalog, _ := camel.DefaultCatalog()
-
 	client, _ := test.NewFakeClient()
-
-	trait := newJvmTrait().(*jvmTrait)
-	trait.Enabled = BoolP(true)
-	trait.PrintCommand = BoolP(false)
-	trait.Ctx = context.TODO()
+	trait, _ := newJvmTrait().(*jvmTrait)
+	trait.PrintCommand = pointer.Bool(false)
 	trait.Client = client
 
 	environment := &Environment{
-		Catalog:      NewCatalog(context.TODO(), nil),
+		Catalog:      NewCatalog(nil),
 		CamelCatalog: catalog,
 		Integration: &v1.Integration{
 			Status: v1.IntegrationStatus{
@@ -278,7 +278,7 @@ func createNominalJvmTest(kitType string) (*jvmTrait, *Environment) {
 				Namespace: "kit-namespace",
 				Name:      "kit-name",
 				Labels: map[string]string{
-					"camel.apache.org/kit.type": kitType,
+					v1.IntegrationKitTypeLabel: kitType,
 				},
 			},
 			Status: v1.IntegrationKitStatus{

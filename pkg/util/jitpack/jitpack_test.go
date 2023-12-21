@@ -22,11 +22,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/apache/camel-k/pkg/util/maven"
+	"github.com/apache/camel-k/v2/pkg/util/maven"
 )
 
 func TestConversion(t *testing.T) {
-	var vals = []struct {
+	vals := []struct {
 		prefixID  string
 		prefixGav string
 	}{
@@ -55,7 +55,7 @@ func TestConversion(t *testing.T) {
 			assert.NotNil(t, d)
 			assert.Equal(t, val.prefixGav+".u", d.GroupID)
 			assert.Equal(t, "r", d.ArtifactID)
-			assert.Equal(t, LatestVersion, d.Version)
+			assert.Equal(t, DefaultVersion, d.Version)
 		})
 	}
 }

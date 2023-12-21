@@ -30,12 +30,12 @@ import (
 	route "github.com/openshift/api/route/v1"
 	template "github.com/openshift/api/template/v1"
 
-	"github.com/apache/camel-k/pkg/util/log"
+	"github.com/apache/camel-k/v2/pkg/util/log"
 )
 
 type registerFunction func(*runtime.Scheme) error
 
-// AddToScheme adds OpenShift types to the scheme
+// AddToScheme adds OpenShift types to the scheme.
 func AddToScheme(scheme *runtime.Scheme) error {
 	var err error
 
@@ -64,5 +64,6 @@ func doAdd(addToScheme registerFunction, scheme *runtime.Scheme, err error) erro
 	if err == nil {
 		return callErr
 	}
+
 	return err
 }

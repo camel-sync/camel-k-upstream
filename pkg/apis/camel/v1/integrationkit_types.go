@@ -20,101 +20,175 @@ package v1
 import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/apache/camel-k/v2/pkg/apis/camel/v1/trait"
 )
 
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 // Important: Run "make generate-deepcopy" to regenerate code after modifying this file
-
-// IntegrationKitSpec defines the desired state of IntegrationKit
-type IntegrationKitSpec struct {
-	Image         string               `json:"image,omitempty"`
-	Dependencies  []string             `json:"dependencies,omitempty"`
-	Profile       TraitProfile         `json:"profile,omitempty"`
-	Traits        map[string]TraitSpec `json:"traits,omitempty"`
-	Configuration []ConfigurationSpec  `json:"configuration,omitempty"`
-	Repositories  []string             `json:"repositories,omitempty"`
-}
-
-// IntegrationKitStatus defines the observed state of IntegrationKit
-type IntegrationKitStatus struct {
-	Phase           IntegrationKitPhase       `json:"phase,omitempty"`
-	BaseImage       string                    `json:"baseImage,omitempty"`
-	Image           string                    `json:"image,omitempty"`
-	Digest          string                    `json:"digest,omitempty"`
-	Artifacts       []Artifact                `json:"artifacts,omitempty"`
-	Failure         *Failure                  `json:"failure,omitempty"`
-	RuntimeVersion  string                    `json:"runtimeVersion,omitempty"`
-	RuntimeProvider RuntimeProvider           `json:"runtimeProvider,omitempty"`
-	Platform        string                    `json:"platform,omitempty"`
-	Conditions      []IntegrationKitCondition `json:"conditions,omitempty"`
-	Version         string                    `json:"version,omitempty"`
-}
 
 // +genclient
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:path=integrationkits,scope=Namespaced,shortName=ik,categories=kamel;camel
 // +kubebuilder:subresource:status
 // +kubebuilder:storageversion
+// +kubebuilder:printcolumn:name="Alias",type=string,JSONPath=`.metadata.labels.camel\.apache\.org\/kit\.alias`,description="The integration kit alias"
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`,description="The integration kit phase"
 // +kubebuilder:printcolumn:name="Type",type=string,JSONPath=`.metadata.labels.camel\.apache\.org\/kit\.type`,description="The integration kit type"
+// +kubebuilder:printcolumn:name="Layout",type=string,JSONPath=`.metadata.labels.camel\.apache\.org\/kit\.layout`,description="The integration kit layout"
 // +kubebuilder:printcolumn:name="Image",type=string,JSONPath=`.status.image`,description="The integration kit image"
+// +kubebuilder:printcolumn:name="Root",type=string,JSONPath=`.status.rootImage`,description="The integration kit root image"
 
-// IntegrationKit is the Schema for the integrationkits API
+// IntegrationKit defines a container image and additional configuration needed to run an `Integration`.
+// An `IntegrationKit` is a generic image generally built from the requirements of an `Integration`, but agnostic to it,
+// in order to be reused by any other `Integration` which has the same required set of capabilities. An `IntegrationKit`
+// may be used for other kits as a base container layer, when the `incremental` build option is enabled.
 type IntegrationKit struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   IntegrationKitSpec   `json:"spec,omitempty"`
+	// the desired configuration
+	Spec IntegrationKitSpec `json:"spec,omitempty"`
+	// the actual status
 	Status IntegrationKitStatus `json:"status,omitempty"`
+}
+
+// IntegrationKitSpec defines a container image and additional configurations required to kick off an `Integration` with certain features.
+type IntegrationKitSpec struct {
+	// the container image as identified in the container registry
+	Image string `json:"image,omitempty"`
+	// a list of Camel dependecies used by this kit
+	Dependencies []string `json:"dependencies,omitempty"`
+	// the profile which is expected by this kit
+	Profile TraitProfile `json:"profile,omitempty"`
+	// traits that the kit will execute
+	Traits IntegrationKitTraits `json:"traits,omitempty"`
+	// Deprecated:
+	// Use camel trait (camel.properties) to manage properties
+	// Use mount trait (mount.configs) to manage configs
+	// Use mount trait (mount.resources) to manage resources
+	// Use mount trait (mount.volumes) to manage volumes
+	// configuration used by the kit
+	Configuration []ConfigurationSpec `json:"configuration,omitempty"`
+	// Maven repositories that can be used by the kit
+	Repositories []string `json:"repositories,omitempty"`
+	// the sources to add at build time
+	Sources []SourceSpec `json:"sources,omitempty"`
+}
+
+// IntegrationKitTraits defines traits assigned to an `IntegrationKit`.
+type IntegrationKitTraits struct {
+	// The builder trait is internally used to determine the best strategy to build and configure IntegrationKits.
+	Builder *trait.BuilderTrait `property:"builder" json:"builder,omitempty"`
+	// The Camel trait sets up Camel configuration.
+	Camel *trait.CamelTrait `property:"camel" json:"camel,omitempty"`
+	// The Quarkus trait configures the Quarkus runtime.
+	// It's enabled by default.
+	// NOTE: Compiling to a native executable, requires at least 4GiB of memory, so the Pod running the native build must have enough memory available.
+	Quarkus *trait.QuarkusTrait `property:"quarkus" json:"quarkus,omitempty"`
+	// The Registry trait sets up Maven to use the Image registry as a Maven repository.
+	Registry *trait.RegistryTrait `property:"registry" json:"registry,omitempty"`
+	// The collection of addon trait configurations
+	Addons map[string]AddonTrait `json:"addons,omitempty"`
+}
+
+// IntegrationKitStatus defines the observed state of IntegrationKit.
+type IntegrationKitStatus struct {
+	// ObservedGeneration is the most recent generation observed for this IntegrationKit.
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+	// phase of the kit
+	Phase IntegrationKitPhase `json:"phase,omitempty"`
+	// root image used by the kit (the first image from which the incremental image has started, typically a JDK/JRE base image)
+	RootImage string `json:"rootImage,omitempty"`
+	// base image used by the kit (could be another IntegrationKit)
+	BaseImage string `json:"baseImage,omitempty"`
+	// actual image name of the kit
+	Image string `json:"image,omitempty"`
+	// actual image digest of the kit
+	Digest string `json:"digest,omitempty"`
+	// list of artifacts used by the kit
+	Artifacts []Artifact `json:"artifacts,omitempty"`
+	// failure reason (if any)
+	Failure *Failure `json:"failure,omitempty"`
+	// the runtime version for which this kit was configured
+	RuntimeVersion string `json:"runtimeVersion,omitempty"`
+	// the runtime provider for which this kit was configured
+	RuntimeProvider RuntimeProvider `json:"runtimeProvider,omitempty"`
+	// the platform for which this kit was configured
+	Platform string `json:"platform,omitempty"`
+	// the Camel K operator version for which this kit was configured
+	Version string `json:"version,omitempty"`
+	// a list of conditions which happened for the events related the kit
+	Conditions []IntegrationKitCondition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// IntegrationKitList contains a list of IntegrationKit
+// IntegrationKitList contains a list of IntegrationKit.
 type IntegrationKitList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []IntegrationKit `json:"items"`
 }
 
-// IntegrationKitPhase --
+// IntegrationKitPhase --.
 type IntegrationKitPhase string
 
-// IntegrationKitConditionType --
+// IntegrationKitConditionType --.
 type IntegrationKitConditionType string
 
 const (
-	// IntegrationKitKind --
+	// IntegrationKitKind --.
 	IntegrationKitKind string = "IntegrationKit"
 
-	// IntegrationKitTypePlatform --
+	// IntegrationKitTypeLabel labels the kit type.
+	IntegrationKitTypeLabel = "camel.apache.org/kit.type"
+
+	// IntegrationKitTypePlatform identifies a kit created by the platform.
 	IntegrationKitTypePlatform = "platform"
-
-	// IntegrationKitTypeUser --
+	// IntegrationKitTypeUser identifies a kit created by the user.
 	IntegrationKitTypeUser = "user"
-
-	// IntegrationKitTypeExternal --
+	// IntegrationKitTypeExternal identifies a kit created by any third party.
 	IntegrationKitTypeExternal = "external"
 
-	// IntegrationKitPhaseNone --
+	// IntegrationKitLayoutLabel labels the kit layout.
+	IntegrationKitLayoutLabel = "camel.apache.org/kit.layout"
+
+	// IntegrationKitLayoutFastJar labels a kit using the Quarkus fast-jar packaging.
+	IntegrationKitLayoutFastJar = "fast-jar"
+	// IntegrationKitLayoutNative labels a kit using the Quarkus native packaging.
+	IntegrationKitLayoutNative = "native"
+	// IntegrationKitLayoutNativeSources labels a kit using the Quarkus native-sources packaging.
+	IntegrationKitLayoutNativeSources = "native-sources"
+
+	// IntegrationKitPriorityLabel labels the kit priority.
+	IntegrationKitPriorityLabel = "camel.apache.org/kit.priority"
+
+	// IntegrationKitPhaseNone --.
 	IntegrationKitPhaseNone IntegrationKitPhase = ""
-	// IntegrationKitPhaseInitialization --
+	// IntegrationKitPhaseInitialization --.
 	IntegrationKitPhaseInitialization IntegrationKitPhase = "Initialization"
-	// IntegrationKitPhaseWaitingForPlatform --
+	// IntegrationKitPhaseWaitingForPlatform --.
 	IntegrationKitPhaseWaitingForPlatform IntegrationKitPhase = "Waiting For Platform"
-	// IntegrationKitPhaseBuildSubmitted --
+	// IntegrationKitPhaseBuildSubmitted --.
 	IntegrationKitPhaseBuildSubmitted IntegrationKitPhase = "Build Submitted"
-	// IntegrationKitPhaseBuildRunning --
+	// IntegrationKitPhaseBuildRunning --.
 	IntegrationKitPhaseBuildRunning IntegrationKitPhase = "Build Running"
-	// IntegrationKitPhaseReady --
+	// IntegrationKitPhaseWaitingForCatalog --.
+	IntegrationKitPhaseWaitingForCatalog IntegrationKitPhase = "Waiting For Catalog"
+	// IntegrationKitPhaseReady --.
 	IntegrationKitPhaseReady IntegrationKitPhase = "Ready"
-	// IntegrationKitPhaseError --
+	// IntegrationKitPhaseError --.
 	IntegrationKitPhaseError IntegrationKitPhase = "Error"
 
-	// IntegrationKitConditionPlatformAvailable --
+	// IntegrationKitConditionPlatformAvailable --.
 	IntegrationKitConditionPlatformAvailable IntegrationKitConditionType = "IntegrationPlatformAvailable"
-	// IntegrationKitConditionPlatformAvailableReason --
+	// IntegrationKitConditionCatalogAvailable --.
+	IntegrationKitConditionCatalogAvailable IntegrationKitConditionType = "CamelCatalogAvailable"
+	// IntegrationKitConditionPlatformAvailableReason --.
 	IntegrationKitConditionPlatformAvailableReason string = "IntegrationPlatformAvailable"
+	// IntegrationKitConditionTraitInfo --.
+	IntegrationKitConditionTraitInfo IntegrationKitConditionType = "TraitInfo"
 )
 
 // IntegrationKitCondition describes the state of a resource at a certain point.

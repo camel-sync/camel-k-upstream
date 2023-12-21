@@ -20,66 +20,59 @@ package build
 import (
 	"context"
 	"sync"
-	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
 	ctrl "sigs.k8s.io/controller-runtime/pkg/client"
 
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
-	"github.com/apache/camel-k/pkg/event"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+	"github.com/apache/camel-k/v2/pkg/event"
+	"github.com/apache/camel-k/v2/pkg/util/kubernetes"
 )
 
-func newScheduleAction(reader ctrl.Reader) Action {
+func newScheduleAction(reader ctrl.Reader, buildMonitor Monitor) Action {
 	return &scheduleAction{
-		reader: reader,
+		reader:       reader,
+		buildMonitor: buildMonitor,
 	}
 }
 
 type scheduleAction struct {
 	baseAction
-	lock   sync.Mutex
-	reader ctrl.Reader
+	lock         sync.Mutex
+	reader       ctrl.Reader
+	buildMonitor Monitor
 }
 
-// Name returns a common name of the action
+// Name returns a common name of the action.
 func (action *scheduleAction) Name() string {
 	return "schedule"
 }
 
-// CanHandle tells whether this action can handle the build
+// CanHandle tells whether this action can handle the build.
 func (action *scheduleAction) CanHandle(build *v1.Build) bool {
 	return build.Status.Phase == v1.BuildPhaseScheduling
 }
 
-// Handle handles the builds
+// Handle handles the builds.
 func (action *scheduleAction) Handle(ctx context.Context, build *v1.Build) (*v1.Build, error) {
 	// Enter critical section
 	action.lock.Lock()
 	defer action.lock.Unlock()
 
-	builds := &v1.BuildList{}
-	// We use the non-caching client as informers cache is not invalidated nor updated
-	// atomically by write operations
-	err := action.reader.List(ctx, builds, ctrl.InNamespace(build.Namespace))
-	if err != nil {
+	if allowed, err := action.buildMonitor.canSchedule(ctx, action.reader, build); err != nil {
 		return nil, err
-	}
-
-	// Emulate a serialized working queue to only allow one build to run at a given time.
-	// This is currently necessary for the incremental build to work as expected.
-	// We may want to explicitly manage build priority as opposed to relying on
-	// the reconcile loop to handle the queuing
-	for _, b := range builds.Items {
-		if b.Status.Phase == v1.BuildPhasePending || b.Status.Phase == v1.BuildPhaseRunning {
-			// Let's requeue the build in case one is already running
-			return nil, nil
-		}
+	} else if !allowed {
+		// Build not allowed at this state (probably max running builds limit exceeded) - let's requeue the build
+		return nil, nil
 	}
 
 	// Reset the Build status, and transition it to pending phase.
 	// This must be done in the critical section, rather than delegated to the controller.
-	err = action.patchBuildStatus(ctx, build, func(b *v1.Build) {
+	return nil, action.toPendingPhase(ctx, build)
+}
+
+func (action *scheduleAction) toPendingPhase(ctx context.Context, build *v1.Build) error {
+	err := action.patchBuildStatus(ctx, build, func(b *v1.Build) {
 		now := metav1.Now()
 		b.Status = v1.BuildStatus{
 			Phase:      v1.BuildPhasePending,
@@ -89,13 +82,16 @@ func (action *scheduleAction) Handle(ctx context.Context, build *v1.Build) (*v1.
 		}
 	})
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	// Report the duration the Build has been waiting in the build queue
-	queueDuration.Observe(time.Now().Sub(getBuildQueuingTime(build)).Seconds())
+	monitorRunningBuild(build)
 
-	return nil, nil
+	buildCreator := kubernetes.GetCamelCreator(build)
+	// Report the duration the Build has been waiting in the build queue
+	observeBuildQueueDuration(build, buildCreator)
+
+	return nil
 }
 
 func (action *scheduleAction) patchBuildStatus(ctx context.Context, build *v1.Build, mutate func(b *v1.Build)) error {
@@ -106,7 +102,7 @@ func (action *scheduleAction) patchBuildStatus(ctx context.Context, build *v1.Bu
 	}
 
 	if target.Status.Phase != build.Status.Phase {
-		action.L.Info("state transition", "phase-from", build.Status.Phase, "phase-to", target.Status.Phase)
+		action.L.Info("State transition", "phase-from", build.Status.Phase, "phase-to", target.Status.Phase)
 	}
 	event.NotifyBuildUpdated(ctx, action.client, action.recorder, build, target)
 

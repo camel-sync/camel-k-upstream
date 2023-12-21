@@ -20,9 +20,9 @@ limitations under the License.
 package fake
 
 import (
-	clientset "github.com/apache/camel-k/addons/strimzi/duck/client/internalclientset"
-	kafkav1beta2 "github.com/apache/camel-k/addons/strimzi/duck/client/internalclientset/typed/duck/v1beta2"
-	fakekafkav1beta2 "github.com/apache/camel-k/addons/strimzi/duck/client/internalclientset/typed/duck/v1beta2/fake"
+	clientset "github.com/apache/camel-k/v2/addons/strimzi/duck/client/internalclientset"
+	kafkav1beta2 "github.com/apache/camel-k/v2/addons/strimzi/duck/client/internalclientset/typed/duck/v1beta2"
+	fakekafkav1beta2 "github.com/apache/camel-k/v2/addons/strimzi/duck/client/internalclientset/typed/duck/v1beta2/fake"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/discovery"
@@ -75,7 +75,10 @@ func (c *Clientset) Tracker() testing.ObjectTracker {
 	return c.tracker
 }
 
-var _ clientset.Interface = &Clientset{}
+var (
+	_ clientset.Interface = &Clientset{}
+	_ testing.FakeClient  = &Clientset{}
+)
 
 // KafkaV1beta2 retrieves the KafkaV1beta2Client
 func (c *Clientset) KafkaV1beta2() kafkav1beta2.KafkaV1beta2Interface {

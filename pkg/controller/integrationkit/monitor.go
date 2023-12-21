@@ -20,11 +20,11 @@ package integrationkit
 import (
 	"context"
 
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
-	"github.com/apache/camel-k/pkg/util/digest"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+	"github.com/apache/camel-k/v2/pkg/util/digest"
 )
 
-// NewMonitorAction creates a new monitoring handling action for the kit
+// NewMonitorAction creates a new monitoring handling action for the kit.
 func NewMonitorAction() Action {
 	return &monitorAction{}
 }

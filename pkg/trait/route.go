@@ -25,130 +25,68 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/utils/pointer"
 
 	routev1 "github.com/openshift/api/route/v1"
 
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
-	"github.com/apache/camel-k/pkg/util/kubernetes"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+	traitv1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1/trait"
+	"github.com/apache/camel-k/v2/pkg/util/kubernetes"
 )
 
-// The Route trait can be used to configure the creation of OpenShift routes for the integration.
-//
-// The certificate and key contents may be sourced either from the local filesystem or in a Openshift `secret` object.
-// The user may use the parameters ending in `-secret` (example: `tls-certificate-secret`) to reference a certificate stored in a `secret`.
-// Parameters ending in `-secret` have higher priorities and in case the same route parameter is set, for example: `tls-key-secret` and `tls-key`,
-// then `tls-key-secret` is used.
-// The recommended approach to set the key and certificates is to use `secrets` to store their contents and use the
-// following parameters to reference them: `tls-certificate-secret`, `tls-key-secret`, `tls-ca-certificate-secret`, `tls-destination-ca-certificate-secret`
-// See the examples section at the end of this page to see the setup options.
-//
-// +camel-k:trait=route
 type routeTrait struct {
-	BaseTrait `property:",squash"`
-	// To configure the host exposed by the route.
-	Host string `property:"host" json:"host,omitempty"`
-	// The TLS termination type, like `edge`, `passthrough` or `reencrypt`.
-	//
-	// Refer to the OpenShift route documentation for additional information.
-	TLSTermination string `property:"tls-termination" json:"tlsTermination,omitempty"`
-	// The TLS certificate contents.
-	//
-	// Refer to the OpenShift route documentation for additional information.
-	TLSCertificate string `property:"tls-certificate" json:"tlsCertificate,omitempty"`
-	// The secret name and key reference to the TLS certificate. The format is "secret-name[/key-name]", the value represents the secret name, if there is only one key in the secret it will be read, otherwise you can set a key name separated with a "/".
-	//
-	// Refer to the OpenShift route documentation for additional information.
-	TLSCertificateSecret string `property:"tls-certificate-secret" json:"tlsCertificateSecret,omitempty"`
-	// The TLS certificate key contents.
-	//
-	// Refer to the OpenShift route documentation for additional information.
-	TLSKey string `property:"tls-key" json:"tlsKey,omitempty"`
-	// The secret name and key reference to the TLS certificate key. The format is "secret-name[/key-name]", the value represents the secret name, if there is only one key in the secret it will be read, otherwise you can set a key name separated with a "/".
-	//
-	// Refer to the OpenShift route documentation for additional information.
-	TLSKeySecret string `property:"tls-key-secret" json:"tlsKeySecret,omitempty"`
-	// The TLS CA certificate contents.
-	//
-	// Refer to the OpenShift route documentation for additional information.
-	TLSCACertificate string `property:"tls-ca-certificate" json:"tlsCACertificate,omitempty"`
-	// The secret name and key reference to the TLS CA certificate. The format is "secret-name[/key-name]", the value represents the secret name, if there is only one key in the secret it will be read, otherwise you can set a key name separated with a "/".
-	//
-	// Refer to the OpenShift route documentation for additional information.
-	TLSCACertificateSecret string `property:"tls-ca-certificate-secret" json:"tlsCACertificateSecret,omitempty"`
-	// The destination CA certificate provides the contents of the ca certificate of the final destination.  When using reencrypt
-	// termination this file should be provided in order to have routers use it for health checks on the secure connection.
-	// If this field is not specified, the router may provide its own destination CA and perform hostname validation using
-	// the short service name (service.namespace.svc), which allows infrastructure generated certificates to automatically
-	// verify.
-	//
-	// Refer to the OpenShift route documentation for additional information.
-	TLSDestinationCACertificate string `property:"tls-destination-ca-certificate" json:"tlsDestinationCACertificate,omitempty"`
-	// The secret name and key reference to the destination CA certificate. The format is "secret-name[/key-name]", the value represents the secret name, if there is only one key in the secret it will be read, otherwise you can set a key name separated with a "/".
-	//
-	// Refer to the OpenShift route documentation for additional information.
-	TLSDestinationCACertificateSecret string `property:"tls-destination-ca-certificate-secret" json:"tlsDestinationCACertificateSecret,omitempty"`
-	// To configure how to deal with insecure traffic, e.g. `Allow`, `Disable` or `Redirect` traffic.
-	//
-	// Refer to the OpenShift route documentation for additional information.
-	TLSInsecureEdgeTerminationPolicy string `property:"tls-insecure-edge-termination-policy" json:"tlsInsecureEdgeTerminationPolicy,omitempty"`
-
-	service *corev1.Service
+	BaseTrait
+	traitv1.RouteTrait `property:",squash"`
+	service            *corev1.Service
 }
 
 func newRouteTrait() Trait {
 	return &routeTrait{
 		BaseTrait: NewBaseTrait("route", 2200),
+		RouteTrait: traitv1.RouteTrait{
+			Annotations: map[string]string{},
+		},
 	}
 }
 
-// IsAllowedInProfile overrides default
+// IsAllowedInProfile overrides default.
 func (t *routeTrait) IsAllowedInProfile(profile v1.TraitProfile) bool {
-	return profile == v1.TraitProfileOpenShift
+	return profile.Equal(v1.TraitProfileOpenShift)
 }
 
-func (t *routeTrait) Configure(e *Environment) (bool, error) {
-	if IsFalse(t.Enabled) {
-		if e.Integration != nil {
-			e.Integration.Status.SetCondition(
-				v1.IntegrationConditionExposureAvailable,
-				corev1.ConditionFalse,
-				v1.IntegrationConditionRouteNotAvailableReason,
-				"explicitly disabled",
-			)
-		}
-
-		return false, nil
+func (t *routeTrait) Configure(e *Environment) (bool, *TraitCondition, error) {
+	if e.Integration == nil {
+		return false, nil, nil
 	}
-
+	if !pointer.BoolDeref(t.Enabled, true) {
+		return false, NewIntegrationCondition(
+			v1.IntegrationConditionExposureAvailable,
+			corev1.ConditionFalse,
+			v1.IntegrationConditionRouteNotAvailableReason,
+			"explicitly disabled",
+		), nil
+	}
 	if !e.IntegrationInRunningPhases() {
-		return false, nil
+		return false, nil, nil
 	}
 
 	t.service = e.Resources.GetUserServiceForIntegration(e.Integration)
 	if t.service == nil {
-		if e.Integration != nil {
-			e.Integration.Status.SetCondition(
-				v1.IntegrationConditionExposureAvailable,
-				corev1.ConditionFalse,
-				v1.IntegrationConditionRouteNotAvailableReason,
-				"no target service found",
-			)
-		}
-
-		return false, nil
+		return false, nil, nil
 	}
 
-	return true, nil
+	return true, nil, nil
 }
 
 func (t *routeTrait) Apply(e *Environment) error {
 	servicePortName := defaultContainerPortName
-	dt := e.Catalog.GetTrait(containerTraitID)
-	if dt != nil {
-		servicePortName = dt.(*containerTrait).ServicePortName
+	if dt := e.Catalog.GetTrait(containerTraitID); dt != nil {
+		if ct, ok := dt.(*containerTrait); ok {
+			servicePortName = ct.ServicePortName
+		}
 	}
 
-	tlsConfig, err := t.getTLSConfig()
+	tlsConfig, err := t.getTLSConfig(e)
 	if err != nil {
 		return err
 	}
@@ -163,6 +101,7 @@ func (t *routeTrait) Apply(e *Environment) error {
 			Labels: map[string]string{
 				v1.IntegrationLabel: e.Integration.Name,
 			},
+			Annotations: t.Annotations,
 		},
 		Spec: routev1.RouteSpec{
 			Port: &routev1.RoutePort{
@@ -204,7 +143,7 @@ func (t *routeTrait) Apply(e *Environment) error {
 	return nil
 }
 
-func (t *routeTrait) getTLSConfig() (*routev1.TLSConfig, error) {
+func (t *routeTrait) getTLSConfig(e *Environment) (*routev1.TLSConfig, error) {
 	// a certificate is a multiline text, but to set it as value in a single line in CLI, the user must escape the new line character as \\n
 	// but in the TLS configuration, the certificates should be a multiline string
 	// then we need to replace the incoming escaped new lines \\n for a real new line \n
@@ -214,25 +153,25 @@ func (t *routeTrait) getTLSConfig() (*routev1.TLSConfig, error) {
 	destinationCAcertificate := strings.ReplaceAll(t.TLSDestinationCACertificate, "\\n", "\n")
 	var err error
 	if t.TLSKeySecret != "" {
-		key, err = t.readContentIfExists(t.TLSKeySecret)
+		key, err = t.readContentIfExists(e, t.TLSKeySecret)
 		if err != nil {
 			return nil, err
 		}
 	}
 	if t.TLSCertificateSecret != "" {
-		certificate, err = t.readContentIfExists(t.TLSCertificateSecret)
+		certificate, err = t.readContentIfExists(e, t.TLSCertificateSecret)
 		if err != nil {
 			return nil, err
 		}
 	}
 	if t.TLSCACertificateSecret != "" {
-		CACertificate, err = t.readContentIfExists(t.TLSCACertificateSecret)
+		CACertificate, err = t.readContentIfExists(e, t.TLSCACertificateSecret)
 		if err != nil {
 			return nil, err
 		}
 	}
 	if t.TLSDestinationCACertificateSecret != "" {
-		destinationCAcertificate, err = t.readContentIfExists(t.TLSDestinationCACertificateSecret)
+		destinationCAcertificate, err = t.readContentIfExists(e, t.TLSDestinationCACertificateSecret)
 		if err != nil {
 			return nil, err
 		}
@@ -254,7 +193,7 @@ func (t *routeTrait) getTLSConfig() (*routev1.TLSConfig, error) {
 	return &config, nil
 }
 
-func (t *routeTrait) readContentIfExists(secretName string) (string, error) {
+func (t *routeTrait) readContentIfExists(e *Environment, secretName string) (string, error) {
 	key := ""
 	strs := strings.Split(secretName, "/")
 	if len(strs) > 1 {
@@ -262,7 +201,7 @@ func (t *routeTrait) readContentIfExists(secretName string) (string, error) {
 		key = strs[1]
 	}
 
-	secret := kubernetes.LookupSecret(t.Ctx, t.Client, t.service.Namespace, secretName)
+	secret := kubernetes.LookupSecret(e.Ctx, t.Client, t.service.Namespace, secretName)
 	if secret == nil {
 		return "", fmt.Errorf("%s secret not found in %s namespace, make sure to provide it before the Integration can run", secretName, t.service.Namespace)
 	}

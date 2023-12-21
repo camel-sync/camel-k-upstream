@@ -25,28 +25,33 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/pointer"
 
 	serving "knative.dev/serving/pkg/apis/serving/v1"
 
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
-	"github.com/apache/camel-k/pkg/util/camel"
-	"github.com/apache/camel-k/pkg/util/kubernetes"
-	"github.com/apache/camel-k/pkg/util/test"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+	traitv1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1/trait"
+	"github.com/apache/camel-k/v2/pkg/util/camel"
+	"github.com/apache/camel-k/v2/pkg/util/kubernetes"
+	"github.com/apache/camel-k/v2/pkg/util/test"
 )
 
 func NewIstioTestEnv(t *testing.T, d *appsv1.Deployment, s *serving.Service, enabled bool) Environment {
+	t.Helper()
+	client, _ := test.NewFakeClient()
 	catalog, err := camel.DefaultCatalog()
 	assert.Nil(t, err)
 
 	env := Environment{
 		Catalog:      NewEnvironmentTestCatalog(),
 		CamelCatalog: catalog,
+		Client:       client,
 		Integration: &v1.Integration{
 			Status: v1.IntegrationStatus{
 				Phase: v1.IntegrationPhaseDeploying,
 			},
 			Spec: v1.IntegrationSpec{
-				Traits: make(map[string]v1.TraitSpec),
+				Traits: v1.Traits{},
 			},
 		},
 		Platform: &v1.IntegrationPlatform{
@@ -55,7 +60,12 @@ func NewIstioTestEnv(t *testing.T, d *appsv1.Deployment, s *serving.Service, ena
 			},
 			Spec: v1.IntegrationPlatformSpec{
 				Cluster: v1.IntegrationPlatformClusterOpenShift,
-				Profile: v1.TraitProfileKnative,
+				Build: v1.IntegrationPlatformBuildSpec{
+					RuntimeVersion: catalog.Runtime.Version,
+				},
+			},
+			Status: v1.IntegrationPlatformStatus{
+				Phase: v1.IntegrationPlatformPhaseReady,
 			},
 		},
 		EnvVars:   make([]corev1.EnvVar, 0),
@@ -64,9 +74,11 @@ func NewIstioTestEnv(t *testing.T, d *appsv1.Deployment, s *serving.Service, ena
 	env.Platform.ResyncStatusFullConfig()
 
 	if enabled {
-		env.Integration.Spec.Traits["istio"] = test.TraitSpecFromMap(t, map[string]interface{}{
-			"enabled": true,
-		})
+		env.Integration.Spec.Traits.Istio = &traitv1.IstioTrait{
+			Trait: traitv1.Trait{
+				Enabled: pointer.Bool(true),
+			},
+		}
 	}
 
 	return env
@@ -87,9 +99,9 @@ func TestIstioInject(t *testing.T) {
 	}
 
 	env := NewIstioTestEnv(t, &d, &s, true)
-	err := env.Catalog.apply(&env)
+	conditions, err := env.Catalog.apply(&env)
 	assert.Nil(t, err)
-
+	assert.Empty(t, conditions)
 	assert.Empty(t, s.Spec.ConfigurationSpec.Template.Annotations[istioSidecarInjectAnnotation])
 	assert.NotEmpty(t, d.Spec.Template.Annotations[istioSidecarInjectAnnotation])
 }
@@ -109,14 +121,12 @@ func TestIstioForcedInjectTrue(t *testing.T) {
 	}
 
 	env := NewIstioTestEnv(t, &d, &s, true)
-	env.Integration.Spec.Traits["istio"] = test.TraitSpecFromMap(t, map[string]interface{}{
-		"enabled": true,
-		"inject":  true,
-	})
+	env.Integration.Spec.Traits.Istio.Enabled = pointer.Bool(true)
+	env.Integration.Spec.Traits.Istio.Inject = pointer.Bool(true)
 
-	err := env.Catalog.apply(&env)
+	conditions, err := env.Catalog.apply(&env)
 	assert.Nil(t, err)
-
+	assert.Empty(t, conditions)
 	assert.Equal(t, "true", s.Spec.ConfigurationSpec.Template.Annotations[istioSidecarInjectAnnotation])
 	assert.Equal(t, "true", d.Spec.Template.Annotations[istioSidecarInjectAnnotation])
 }
@@ -136,14 +146,12 @@ func TestIstioForcedInjectFalse(t *testing.T) {
 	}
 
 	env := NewIstioTestEnv(t, &d, &s, true)
-	env.Integration.Spec.Traits["istio"] = test.TraitSpecFromMap(t, map[string]interface{}{
-		"enabled": true,
-		"inject":  false,
-	})
+	env.Integration.Spec.Traits.Istio.Enabled = pointer.Bool(true)
+	env.Integration.Spec.Traits.Istio.Inject = pointer.Bool(false)
 
-	err := env.Catalog.apply(&env)
+	conditions, err := env.Catalog.apply(&env)
 	assert.Nil(t, err)
-
+	assert.Empty(t, conditions)
 	assert.Equal(t, "false", s.Spec.ConfigurationSpec.Template.Annotations[istioSidecarInjectAnnotation])
 	assert.Equal(t, "false", d.Spec.Template.Annotations[istioSidecarInjectAnnotation])
 }
@@ -164,7 +172,8 @@ func TestIstioDisabled(t *testing.T) {
 
 	env := NewIstioTestEnv(t, &d, &s, false)
 
-	err := env.Catalog.apply(&env)
+	conditions, err := env.Catalog.apply(&env)
 	assert.Nil(t, err)
+	assert.Empty(t, conditions)
 	assert.NotContains(t, env.ExecutedTraits, "istio")
 }

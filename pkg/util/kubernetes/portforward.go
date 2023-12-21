@@ -22,9 +22,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 
-	"github.com/apache/camel-k/pkg/client"
-	"github.com/apache/camel-k/pkg/util/log"
+	"github.com/apache/camel-k/v2/pkg/client"
+	"github.com/apache/camel-k/v2/pkg/util/log"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
@@ -32,10 +33,10 @@ import (
 	restclient "k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/portforward"
 	"k8s.io/client-go/transport/spdy"
-	"net/http"
 )
 
 func PortForward(ctx context.Context, c client.Client, ns, labelSelector string, localPort, remotePort uint, stdOut, stdErr io.Writer) error {
+	log.InitForCmd()
 	list, err := c.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{
 		LabelSelector: labelSelector,
 	})
@@ -85,18 +86,27 @@ func PortForward(ctx context.Context, c client.Client, ns, labelSelector string,
 
 			switch e.Type {
 			case watch.Added:
-				pod := e.Object.(*corev1.Pod)
+				pod, ok := e.Object.(*corev1.Pod)
+				if !ok {
+					return fmt.Errorf("type assertion failed: %v", e.Object)
+				}
 				if err := setupPortForward(pod); err != nil {
 					return err
 				}
 			case watch.Modified:
-				pod := e.Object.(*corev1.Pod)
+				pod, ok := e.Object.(*corev1.Pod)
+				if !ok {
+					return fmt.Errorf("type assertion failed: %v", e.Object)
+				}
 				if err := setupPortForward(pod); err != nil {
 					return err
 				}
 			case watch.Deleted:
 				if forwardPod != nil && e.Object != nil {
-					deletedPod := e.Object.(*corev1.Pod)
+					deletedPod, ok := e.Object.(*corev1.Pod)
+					if !ok {
+						return fmt.Errorf("type assertion failed: %v", e.Object)
+					}
 					if deletedPod.Name == forwardPod.Name {
 						forwardCtxCancel()
 						forwardPod = nil
@@ -109,7 +119,7 @@ func PortForward(ctx context.Context, c client.Client, ns, labelSelector string,
 	}
 }
 
-func portFowardPod(ctx context.Context, config *restclient.Config, ns, pod string, localPort, remotePort uint, stdOut, stdErr io.Writer) (host string, err error) {
+func portFowardPod(ctx context.Context, config *restclient.Config, ns, pod string, localPort, remotePort uint, stdOut, stdErr io.Writer) (string, error) {
 	c, err := corev1client.NewForConfig(config)
 	if err != nil {
 		return "", err
@@ -145,10 +155,8 @@ func portFowardPod(ctx context.Context, config *restclient.Config, ns, pod strin
 
 	go func() {
 		// Stop the port forwarder when the context ends
-		select {
-		case <-ctx.Done():
-			close(stopChan)
-		}
+		<-ctx.Done()
+		close(stopChan)
 	}()
 
 	select {

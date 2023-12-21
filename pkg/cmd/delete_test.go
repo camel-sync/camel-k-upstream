@@ -20,14 +20,17 @@ package cmd
 import (
 	"testing"
 
-	"github.com/apache/camel-k/pkg/util/test"
+	"github.com/apache/camel-k/v2/pkg/util/test"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 )
 
 const cmdDelete = "delete"
 
+// nolint: unparam
 func initializeDeleteCmdOptions(t *testing.T) (*deleteCmdOptions, *cobra.Command, RootCmdOptions) {
+	t.Helper()
+
 	options, rootCmd := kamelTestPreAddCommandInit()
 	deleteCmdOptions := addTestDeleteCmd(*options, rootCmd)
 	kamelTestPostAddCommandInit(t, rootCmd)
@@ -36,7 +39,7 @@ func initializeDeleteCmdOptions(t *testing.T) (*deleteCmdOptions, *cobra.Command
 }
 
 func addTestDeleteCmd(options RootCmdOptions, rootCmd *cobra.Command) *deleteCmdOptions {
-	//add a testing version of delete Command
+	// add a testing version of delete Command
 	deleteCmd, deleteOptions := newCmdDelete(&options)
 	deleteCmd.RunE = func(c *cobra.Command, args []string) error {
 		return nil

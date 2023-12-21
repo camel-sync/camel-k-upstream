@@ -20,23 +20,23 @@ package builder
 import (
 	"context"
 
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
-	"github.com/apache/camel-k/pkg/client"
-	"github.com/apache/camel-k/pkg/util/camel"
-	"github.com/apache/camel-k/pkg/util/log"
-	"github.com/apache/camel-k/pkg/util/maven"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+	"github.com/apache/camel-k/v2/pkg/client"
+	"github.com/apache/camel-k/v2/pkg/util/camel"
+	"github.com/apache/camel-k/v2/pkg/util/log"
+	"github.com/apache/camel-k/v2/pkg/util/maven"
 )
 
 const (
-	// InitPhase --
+	// InitPhase --.
 	InitPhase int32 = 0
-	// ProjectGenerationPhase --
+	// ProjectGenerationPhase --.
 	ProjectGenerationPhase int32 = 10
-	// ProjectBuildPhase --
+	// ProjectBuildPhase --.
 	ProjectBuildPhase int32 = 20
-	// ApplicationPackagePhase --
+	// ApplicationPackagePhase --.
 	ApplicationPackagePhase int32 = 30
-	// ApplicationPublishPhase --
+	// ApplicationPublishPhase --.
 	ApplicationPublishPhase int32 = 40
 )
 
@@ -72,6 +72,7 @@ type resource struct {
 	Content []byte
 }
 
+// nolint: containedctx
 type builderContext struct {
 	client.Client
 	C                 context.Context
@@ -84,9 +85,11 @@ type builderContext struct {
 	SelectedArtifacts []v1.Artifact
 	Resources         []resource
 	Maven             struct {
-		Project        maven.Project
-		SettingsData   []byte
-		TrustStoreName string
-		TrustStorePass string
+		Project          maven.Project
+		UserSettings     []byte
+		GlobalSettings   []byte
+		SettingsSecurity []byte
+		TrustStoreName   string
+		TrustStorePass   string
 	}
 }

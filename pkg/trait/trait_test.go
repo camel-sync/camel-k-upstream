@@ -18,8 +18,7 @@ limitations under the License.
 package trait
 
 import (
-	"context"
-	"path"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -29,11 +28,13 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/pointer"
 
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
-	"github.com/apache/camel-k/pkg/util/camel"
-	"github.com/apache/camel-k/pkg/util/kubernetes"
-	"github.com/apache/camel-k/pkg/util/test"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+	traitv1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1/trait"
+	"github.com/apache/camel-k/v2/pkg/util/camel"
+	"github.com/apache/camel-k/v2/pkg/util/kubernetes"
+	"github.com/apache/camel-k/v2/pkg/util/test"
 )
 
 const (
@@ -80,10 +81,6 @@ func TestOpenShiftTraitsWithWeb(t *testing.T) {
 
 func TestOpenShiftTraitsWithWebAndConfig(t *testing.T) {
 	env := createTestEnv(t, v1.IntegrationPlatformClusterOpenShift, "from('netty-http:http').to('log:info')")
-	env.Integration.Spec.Traits = make(map[string]v1.TraitSpec)
-	env.Integration.Spec.Traits["service"] = test.TraitSpecFromMap(t, map[string]interface{}{
-		"port": 7071,
-	})
 	res := processTestEnv(t, env)
 	assert.NotNil(t, env.GetTrait("service"))
 	assert.NotNil(t, env.GetTrait("route"))
@@ -94,11 +91,11 @@ func TestOpenShiftTraitsWithWebAndConfig(t *testing.T) {
 
 func TestOpenShiftTraitsWithWebAndDisabledTrait(t *testing.T) {
 	env := createTestEnv(t, v1.IntegrationPlatformClusterOpenShift, "from('netty-http:http').to('log:info')")
-	env.Integration.Spec.Traits = make(map[string]v1.TraitSpec)
-	env.Integration.Spec.Traits["service"] = test.TraitSpecFromMap(t, map[string]interface{}{
-		"enabled": false,
-		"port":    7071,
-	})
+	env.Integration.Spec.Traits.Service = &traitv1.ServiceTrait{
+		Trait: traitv1.Trait{
+			Enabled: pointer.Bool(false),
+		},
+	}
 	res := processTestEnv(t, env)
 	assert.Nil(t, env.GetTrait("service"))
 	assert.Nil(t, env.GetTrait("route")) // No route without service
@@ -140,50 +137,29 @@ func TestKubernetesTraitsWithWeb(t *testing.T) {
 	}))
 }
 
-func TestTraitDecode(t *testing.T) {
-	env := createTestEnv(t, v1.IntegrationPlatformClusterOpenShift, "")
-	env.Integration.Spec.Traits = make(map[string]v1.TraitSpec)
-	svcTrait := test.TraitSpecFromMap(t, map[string]interface{}{
-		"enabled": false,
-		"port":    7071,
-		"cippa":   "lippa",
-	})
-	env.Integration.Spec.Traits["service"] = svcTrait
-
-	ctr := newContainerTrait().(*containerTrait)
-	err := decodeTraitSpec(&svcTrait, ctr)
-
-	assert.Nil(t, err)
-	assert.Equal(t, 7071, ctr.Port)
-	assert.NotNil(t, ctr.Enabled)
-	assert.Equal(t, false, *ctr.Enabled)
-}
-
 func TestTraitHierarchyDecode(t *testing.T) {
 	env := createTestEnv(t, v1.IntegrationPlatformClusterOpenShift, "")
 
-	env.Platform.Spec.Traits = make(map[string]v1.TraitSpec)
-	env.Platform.Spec.Traits["knative-service"] = test.TraitSpecFromMap(t, map[string]interface{}{
-		"enabled":           false,
-		"minScale":          1,
-		"maxScale":          10,
-		"autoscalingTarget": 15,
-	})
+	env.Platform.Spec.Traits.KnativeService = &traitv1.KnativeServiceTrait{
+		Trait: traitv1.Trait{
+			Enabled: pointer.Bool(false),
+		},
+		MinScale: pointer.Int(1),
+		MaxScale: pointer.Int(10),
+		Target:   pointer.Int(15),
+	}
 	env.Platform.ResyncStatusFullConfig()
 
-	env.IntegrationKit.Spec.Traits = make(map[string]v1.TraitSpec)
-	env.IntegrationKit.Spec.Traits["knative-service"] = test.TraitSpecFromMap(t, map[string]interface{}{
-		"enabled":  true,
-		"minScale": 5,
-	})
-
-	env.Integration.Spec.Traits = make(map[string]v1.TraitSpec)
-	env.Integration.Spec.Traits["knative-service"] = test.TraitSpecFromMap(t, map[string]interface{}{
-		"maxScale": 20,
-	})
+	env.Integration.Spec.Traits.KnativeService = &traitv1.KnativeServiceTrait{
+		Trait: traitv1.Trait{
+			Enabled: pointer.Bool(true),
+		},
+		MinScale: pointer.Int(5),
+		MaxScale: pointer.Int(20),
+	}
 
 	c := NewTraitTestCatalog()
-	err := c.configure(env)
+	err := c.Configure(env)
 
 	assert.Nil(t, err)
 
@@ -216,51 +192,18 @@ func TestConfigureVolumesAndMountsTextResourcesAndProperties(t *testing.T) {
 				Namespace: "ns",
 			},
 			Spec: v1.IntegrationSpec{
-				Resources: []v1.ResourceSpec{
-					{
-						DataSpec: v1.DataSpec{
-							Name:       "res1.txt",
-							ContentRef: "my-cm1",
-							ContentKey: "my-key1",
-						},
-						Type:      "data",
-						MountPath: "/etc/m1",
-					},
-					{
-						DataSpec: v1.DataSpec{
-							Name:       "res2.txt",
-							ContentRef: "my-cm2",
-						},
-						Type: "data",
-					},
-					{
-						DataSpec: v1.DataSpec{
-							Name:       "res3.txt",
-							ContentKey: "my-key3",
-						},
-						Type: "data",
-					},
-					{
-						DataSpec: v1.DataSpec{
-							Name: "res4.txt",
-						},
-						Type: "data",
-					},
-				},
 				Configuration: []v1.ConfigurationSpec{
 					{
 						Type:  "property",
 						Value: "a=b",
 					},
 					{
-						Type:         "configmap",
-						Value:        "test-configmap",
-						ResourceType: "config",
+						Type:  "configmap",
+						Value: "test-configmap",
 					},
 					{
-						Type:         "secret",
-						Value:        "test-secret",
-						ResourceType: "config",
+						Type:  "secret",
+						Value: "test-secret",
 					},
 					{
 						Type:  "volume",
@@ -278,76 +221,20 @@ func TestConfigureVolumesAndMountsTextResourcesAndProperties(t *testing.T) {
 	vols := make([]corev1.Volume, 0)
 	mnts := make([]corev1.VolumeMount, 0)
 
-	env.Resources.AddAll(env.computeConfigMaps())
 	env.configureVolumesAndMounts(&vols, &mnts)
 
-	assert.Len(t, vols, 8)
-	assert.Len(t, mnts, 8)
+	assert.Len(t, vols, 3)
+	assert.Len(t, mnts, 3)
 
-	v := findVolume(vols, func(v corev1.Volume) bool { return v.ConfigMap.Name == "test-user-properties" })
-	assert.NotNil(t, v)
-	assert.NotNil(t, v.VolumeSource.ConfigMap)
-	assert.Len(t, v.VolumeSource.ConfigMap.Items, 1)
-	assert.Equal(t, "application.properties", v.VolumeSource.ConfigMap.Items[0].Key)
-	assert.Equal(t, "user.properties", v.VolumeSource.ConfigMap.Items[0].Path)
-
-	m := findVVolumeMount(mnts, func(m corev1.VolumeMount) bool { return m.Name == v.Name })
-	assert.NotNil(t, m)
-	assert.Equal(t, "/etc/camel/conf.d/user.properties", m.MountPath)
-
-	v = findVolume(vols, func(v corev1.Volume) bool { return v.ConfigMap.Name == "my-cm1" })
-	assert.NotNil(t, v)
-	assert.NotNil(t, v.VolumeSource.ConfigMap)
-	assert.Len(t, v.VolumeSource.ConfigMap.Items, 1)
-	assert.Equal(t, "my-key1", v.VolumeSource.ConfigMap.Items[0].Key)
-	assert.Equal(t, "res1.txt", v.VolumeSource.ConfigMap.Items[0].Path)
-
-	m = findVVolumeMount(mnts, func(m corev1.VolumeMount) bool { return m.Name == "i-resource-000" })
-	assert.NotNil(t, m)
-	assert.Equal(t, "/etc/m1", m.MountPath)
-
-	v = findVolume(vols, func(v corev1.Volume) bool { return v.ConfigMap.Name == "my-cm2" })
-	assert.NotNil(t, v)
-	assert.NotNil(t, v.VolumeSource.ConfigMap)
-	assert.Len(t, v.VolumeSource.ConfigMap.Items, 1)
-	assert.Equal(t, "content", v.VolumeSource.ConfigMap.Items[0].Key)
-	assert.Equal(t, "res2.txt", v.VolumeSource.ConfigMap.Items[0].Path)
-
-	m = findVVolumeMount(mnts, func(m corev1.VolumeMount) bool { return m.Name == "i-resource-001" })
-	assert.NotNil(t, m)
-	assert.Equal(t, "/etc/camel/resources/res2.txt", m.MountPath)
-
-	v = findVolume(vols, func(v corev1.Volume) bool { return v.ConfigMap.Name == TestDeploymentName+"-resource-002" })
-	assert.NotNil(t, v)
-	assert.NotNil(t, v.VolumeSource.ConfigMap)
-	assert.Len(t, v.VolumeSource.ConfigMap.Items, 1)
-	assert.Equal(t, "my-key3", v.VolumeSource.ConfigMap.Items[0].Key)
-	assert.Equal(t, "res3.txt", v.VolumeSource.ConfigMap.Items[0].Path)
-
-	m = findVVolumeMount(mnts, func(m corev1.VolumeMount) bool { return m.Name == "i-resource-002" })
-	assert.NotNil(t, m)
-	assert.Equal(t, "/etc/camel/resources/res3.txt", m.MountPath)
-
-	v = findVolume(vols, func(v corev1.Volume) bool { return v.ConfigMap.Name == TestDeploymentName+"-resource-003" })
-	assert.NotNil(t, v)
-	assert.NotNil(t, v.VolumeSource.ConfigMap)
-	assert.Len(t, v.VolumeSource.ConfigMap.Items, 1)
-	assert.Equal(t, "content", v.VolumeSource.ConfigMap.Items[0].Key)
-	assert.Equal(t, "res4.txt", v.VolumeSource.ConfigMap.Items[0].Path)
-
-	m = findVVolumeMount(mnts, func(m corev1.VolumeMount) bool { return m.Name == "i-resource-003" })
-	assert.NotNil(t, m)
-	assert.Equal(t, "/etc/camel/resources/res4.txt", m.MountPath)
-
-	v = findVolume(vols, func(v corev1.Volume) bool { return v.ConfigMap.Name == "test-configmap" })
+	v := findVolume(vols, func(v corev1.Volume) bool { return v.ConfigMap.Name == "test-configmap" })
 	assert.NotNil(t, v)
 	assert.NotNil(t, v.VolumeSource.ConfigMap)
 	assert.NotNil(t, v.VolumeSource.ConfigMap.LocalObjectReference)
 	assert.Equal(t, "test-configmap", v.VolumeSource.ConfigMap.LocalObjectReference.Name)
 
-	m = findVVolumeMount(mnts, func(m corev1.VolumeMount) bool { return m.Name == "test-configmap" })
+	m := findVVolumeMount(mnts, func(m corev1.VolumeMount) bool { return m.Name == "test-configmap" })
 	assert.NotNil(t, m)
-	assert.Equal(t, path.Join(configConfigmapsMountPath, "test-configmap"), m.MountPath)
+	assert.Equal(t, filepath.Join(camel.ConfigConfigmapsMountPath, "test-configmap"), m.MountPath)
 
 	v = findVolume(vols, func(v corev1.Volume) bool { return v.Name == "test-secret" })
 	assert.NotNil(t, v)
@@ -356,7 +243,7 @@ func TestConfigureVolumesAndMountsTextResourcesAndProperties(t *testing.T) {
 
 	m = findVVolumeMount(mnts, func(m corev1.VolumeMount) bool { return m.Name == "test-secret" })
 	assert.NotNil(t, m)
-	assert.Equal(t, path.Join(configSecretsMountPath, "test-secret"), m.MountPath)
+	assert.Equal(t, filepath.Join(camel.ConfigSecretsMountPath, "test-secret"), m.MountPath)
 
 	v = findVolume(vols, func(v corev1.Volume) bool { return v.Name == "testvolume-data" })
 	assert.NotNil(t, v)
@@ -397,12 +284,12 @@ func TestConfigureVolumesAndMountsSources(t *testing.T) {
 				},
 			},
 		},
+		Catalog: &Catalog{},
 	}
 
 	vols := make([]corev1.Volume, 0)
 	mnts := make([]corev1.VolumeMount, 0)
 
-	env.Resources.AddAll(env.computeConfigMaps())
 	env.configureVolumesAndMounts(&vols, &mnts)
 
 	assert.Len(t, vols, 2)
@@ -427,7 +314,12 @@ func TestConfigureVolumesAndMountsSources(t *testing.T) {
 	assert.NotNil(t, m)
 }
 
-func TestConfigureVolumesAndMountsBinaryAndTextResources(t *testing.T) {
+func TestConfigureVolumesAndMountsSourcesInNativeMode(t *testing.T) {
+	traitList := make([]Trait, 0, len(FactoryList))
+	trait, ok := newQuarkusTrait().(*quarkusTrait)
+	assert.True(t, ok, "A Quarkus trait was expected")
+	trait.Modes = []traitv1.QuarkusMode{traitv1.NativeQuarkusMode}
+	traitList = append(traitList, trait)
 	env := Environment{
 		Resources: kubernetes.NewCollection(),
 		Integration: &v1.Integration{
@@ -436,26 +328,62 @@ func TestConfigureVolumesAndMountsBinaryAndTextResources(t *testing.T) {
 				Namespace: "ns",
 			},
 			Spec: v1.IntegrationSpec{
-				Resources: []v1.ResourceSpec{
+				Sources: []v1.SourceSpec{
 					{
 						DataSpec: v1.DataSpec{
-							Name:        "res1.bin",
-							RawContent:  []byte{1, 2, 3, 4},
-							ContentRef:  "my-cm1",
-							ContentKey:  "my-binary",
-							ContentType: "application/octet-stream",
+							Name:       "source1.xml",
+							ContentRef: "my-cm1",
+							ContentKey: "source1.xml",
 						},
 						Type: "data",
 					},
 					{
 						DataSpec: v1.DataSpec{
-							Name:        "res2.txt",
-							ContentRef:  "my-cm2",
-							Content:     "hello",
-							ContentKey:  "my-text",
-							ContentType: "text/plain",
+							Name:       "source2.java",
+							ContentRef: "my-cm2",
 						},
 						Type: "data",
+					},
+					{
+						DataSpec: v1.DataSpec{
+							Name:       "source1.java",
+							ContentRef: "my-cm3",
+							ContentKey: "source1.java",
+						},
+						Type: "data",
+					},
+					{
+						DataSpec: v1.DataSpec{
+							Name:       "source2.xml",
+							ContentRef: "my-cm4",
+						},
+						Type: "data",
+					},
+				},
+			},
+			Status: v1.IntegrationStatus{
+				Phase: v1.IntegrationPhaseRunning,
+			},
+		},
+		IntegrationKit: &v1.IntegrationKit{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{
+					v1.IntegrationKitLayoutLabel: v1.IntegrationKitLayoutNativeSources,
+				},
+				Namespace: "ns",
+			},
+		},
+		Catalog: &Catalog{
+			traits: traitList,
+		},
+		CamelCatalog: &camel.RuntimeCatalog{
+			CamelCatalogSpec: v1.CamelCatalogSpec{
+				Loaders: map[string]v1.CamelLoader{
+					"java": {
+						Metadata: map[string]string{
+							"native":                         "true",
+							"sources-required-at-build-time": "true",
+						},
 					},
 				},
 			},
@@ -465,7 +393,6 @@ func TestConfigureVolumesAndMountsBinaryAndTextResources(t *testing.T) {
 	vols := make([]corev1.Volume, 0)
 	mnts := make([]corev1.VolumeMount, 0)
 
-	env.Resources.AddAll(env.computeConfigMaps())
 	env.configureVolumesAndMounts(&vols, &mnts)
 
 	assert.Len(t, vols, 2)
@@ -475,30 +402,26 @@ func TestConfigureVolumesAndMountsBinaryAndTextResources(t *testing.T) {
 	assert.NotNil(t, v)
 	assert.NotNil(t, v.VolumeSource.ConfigMap)
 	assert.Len(t, v.VolumeSource.ConfigMap.Items, 1)
-	assert.Equal(t, "my-binary", v.VolumeSource.ConfigMap.Items[0].Key)
-	assert.Equal(t, "res1.bin", v.VolumeSource.ConfigMap.Items[0].Path)
+	assert.Equal(t, "source1.xml", v.VolumeSource.ConfigMap.Items[0].Key)
 
 	m := findVVolumeMount(mnts, func(m corev1.VolumeMount) bool { return m.Name == v.Name })
 	assert.NotNil(t, m)
-	assert.Equal(t, "/etc/camel/resources/res1.bin", m.MountPath)
 
-	v = findVolume(vols, func(v corev1.Volume) bool { return v.ConfigMap.Name == "my-cm2" })
+	v = findVolume(vols, func(v corev1.Volume) bool { return v.ConfigMap.Name == "my-cm4" })
 	assert.NotNil(t, v)
 	assert.NotNil(t, v.VolumeSource.ConfigMap)
 	assert.Len(t, v.VolumeSource.ConfigMap.Items, 1)
-	assert.Equal(t, "my-text", v.VolumeSource.ConfigMap.Items[0].Key)
-	assert.Equal(t, "res2.txt", v.VolumeSource.ConfigMap.Items[0].Path)
+	assert.Equal(t, "content", v.VolumeSource.ConfigMap.Items[0].Key)
 
 	m = findVVolumeMount(mnts, func(m corev1.VolumeMount) bool { return m.Name == v.Name })
 	assert.NotNil(t, m)
-	assert.Equal(t, "/etc/camel/resources/res2.txt", m.MountPath)
 }
 
 func TestOnlySomeTraitsInfluenceBuild(t *testing.T) {
 	c := NewTraitTestCatalog()
-	buildTraits := []string{"builder", "quarkus"}
+	buildTraits := []string{"builder", "camel", "quarkus", "registry"}
 
-	for _, trait := range c.allTraits() {
+	for _, trait := range c.AllTraits() {
 		if trait.InfluencesKit() {
 			assert.Contains(t, buildTraits, string(trait.ID()))
 		} else {
@@ -509,9 +432,12 @@ func TestOnlySomeTraitsInfluenceBuild(t *testing.T) {
 
 func TestOnlySomeTraitsArePlatform(t *testing.T) {
 	c := NewTraitTestCatalog()
-	platformTraits := []string{"builder", "camel", "jvm", "container", "dependencies", "deployer", "deployment", "environment", "error-handler", "kamelets", "openapi", "owner", "platform", "quarkus"}
+	platformTraits := []string{
+		"builder", "camel", "jvm", "runtime", "container", "mount", "dependencies", "deployer",
+		"deployment", "environment", "error-handler", "kamelets", "openapi", "owner", "platform", "quarkus",
+	}
 
-	for _, trait := range c.allTraits() {
+	for _, trait := range c.AllTraits() {
 		if trait.IsPlatformTrait() {
 			assert.Contains(t, platformTraits, string(trait.ID()))
 		} else {
@@ -524,7 +450,7 @@ func TestOnlySomeTraitsDoNotRequireIntegrationPlatform(t *testing.T) {
 	c := NewTraitTestCatalog()
 	doNotRequirePlatformTraits := []string{"deployer", "platform"}
 
-	for _, trait := range c.allTraits() {
+	for _, trait := range c.AllTraits() {
 		if !trait.RequiresIntegrationPlatform() {
 			assert.Contains(t, doNotRequirePlatformTraits, string(trait.ID()))
 		} else {
@@ -556,19 +482,25 @@ func findVVolumeMount(vols []corev1.VolumeMount, condition func(corev1.VolumeMou
 }
 
 func processTestEnv(t *testing.T, env *Environment) *kubernetes.Collection {
+	t.Helper()
+
 	catalog := NewTraitTestCatalog()
-	err := catalog.apply(env)
+	_, err := catalog.apply(env)
 	assert.Nil(t, err)
 	return env.Resources
 }
 
 func createTestEnv(t *testing.T, cluster v1.IntegrationPlatformCluster, script string) *Environment {
+	t.Helper()
+
+	client, _ := test.NewFakeClient()
 	catalog, err := camel.DefaultCatalog()
 	assert.Nil(t, err)
 
 	res := &Environment{
 		CamelCatalog: catalog,
-		Catalog:      NewCatalog(context.TODO(), nil),
+		Catalog:      NewCatalog(nil),
+		Client:       client,
 		Integration: &v1.Integration{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      TestDeploymentName,
@@ -597,6 +529,12 @@ func createTestEnv(t *testing.T, cluster v1.IntegrationPlatformCluster, script s
 		Platform: &v1.IntegrationPlatform{
 			Spec: v1.IntegrationPlatformSpec{
 				Cluster: cluster,
+				Build: v1.IntegrationPlatformBuildSpec{
+					RuntimeVersion: catalog.Runtime.Version,
+				},
+			},
+			Status: v1.IntegrationPlatformStatus{
+				Phase: v1.IntegrationPlatformPhaseReady,
 			},
 		},
 		EnvVars:        make([]corev1.EnvVar, 0),
@@ -608,5 +546,5 @@ func createTestEnv(t *testing.T, cluster v1.IntegrationPlatformCluster, script s
 }
 
 func NewTraitTestCatalog() *Catalog {
-	return NewCatalog(context.TODO(), nil)
+	return NewCatalog(nil)
 }

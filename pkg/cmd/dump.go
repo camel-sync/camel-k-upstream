@@ -21,15 +21,20 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
+	"time"
+
+	"github.com/apache/camel-k/v2/pkg/util"
 
 	"github.com/spf13/cobra"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/apache/camel-k/pkg/client"
-	"github.com/apache/camel-k/pkg/client/camel/clientset/versioned"
-	"github.com/apache/camel-k/pkg/util/kubernetes"
+	"github.com/apache/camel-k/v2/pkg/client"
+	"github.com/apache/camel-k/v2/pkg/client/camel/clientset/versioned"
+	"github.com/apache/camel-k/v2/pkg/util/kubernetes"
+	"github.com/apache/camel-k/v2/pkg/util/tar"
 )
 
 func newCmdDump(rootCmdOptions *RootCmdOptions) (*cobra.Command, *dumpCmdOptions) {
@@ -45,53 +50,47 @@ func newCmdDump(rootCmdOptions *RootCmdOptions) (*cobra.Command, *dumpCmdOptions
 	}
 
 	cmd.Flags().Int("logLines", 100, "Number of log lines to dump")
+	cmd.Flags().Bool("compressed", false, "If the log file must be compressed in a tar.")
 	return &cmd, &options
 }
 
 type dumpCmdOptions struct {
 	*RootCmdOptions
-	LogLines int `mapstructure:"logLines"`
+	LogLines   int  `mapstructure:"logLines"`
+	Compressed bool `mapstructure:"compressed" yaml:",omitempty"`
 }
 
-func (o *dumpCmdOptions) dump(_ *cobra.Command, args []string) error {
+func (o *dumpCmdOptions) dump(cmd *cobra.Command, args []string) error {
 	c, err := o.GetCmdClient()
 	if err != nil {
 		return err
 	}
+
 	if len(args) == 1 {
-		fileName := args[0]
-		writer, err := os.OpenFile(fileName, os.O_RDWR|os.O_CREATE, 0777)
-		if err != nil {
-			return err
-		}
-		dumpNamespace(o.Context, c, o.Namespace, writer, o.LogLines)
-		defer writer.Close()
+		err = util.WithFile(args[0], os.O_RDWR|os.O_CREATE, 0o644, func(file *os.File) error {
+			if !o.Compressed {
+				return dumpNamespace(o.Context, c, o.Namespace, file, o.LogLines)
+			}
+			err = dumpNamespace(o.Context, c, o.Namespace, file, o.LogLines)
+			if err != nil {
+				return err
+			}
+			tar.CreateTarFile([]string{file.Name()}, "dump."+file.Name()+"."+time.Now().Format(time.RFC3339)+".tar.gz", cmd)
+			return nil
+		})
 	} else {
-		dumpNamespace(o.Context, c, o.Namespace, os.Stdout, o.LogLines)
+		return dumpNamespace(o.Context, c, o.Namespace, cmd.OutOrStdout(), o.LogLines)
 	}
 	return nil
 }
 
-func dumpNamespace(ctx context.Context, c client.Client, ns string, out *os.File, logLines int) error {
-
+func dumpNamespace(ctx context.Context, c client.Client, ns string, out io.Writer, logLines int) error {
 	camelClient, err := versioned.NewForConfig(c.GetConfig())
 	if err != nil {
 		return err
 	}
-	pls, err := camelClient.CamelV1().IntegrationPlatforms(ns).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(out, "Found %d platforms:\n", len(pls.Items))
-	for _, p := range pls.Items {
-		ref := p
-		pdata, err := kubernetes.ToYAML(&ref)
-		if err != nil {
-			return err
-		}
-		fmt.Fprintf(out, "---\n%s\n---\n", string(pdata))
-	}
 
+	// Integrations
 	its, err := camelClient.CamelV1().Integrations(ns).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return err
@@ -106,6 +105,7 @@ func dumpNamespace(ctx context.Context, c client.Client, ns string, out *os.File
 		fmt.Fprintf(out, "---\n%s\n---\n", string(pdata))
 	}
 
+	// IntegrationKits
 	iks, err := camelClient.CamelV1().IntegrationKits(ns).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return err
@@ -120,6 +120,7 @@ func dumpNamespace(ctx context.Context, c client.Client, ns string, out *os.File
 		fmt.Fprintf(out, "---\n%s\n---\n", string(pdata))
 	}
 
+	// ConfigMaps
 	cms, err := c.CoreV1().ConfigMaps(ns).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return err
@@ -134,11 +135,12 @@ func dumpNamespace(ctx context.Context, c client.Client, ns string, out *os.File
 		fmt.Fprintf(out, "---\n%s\n---\n", string(pdata))
 	}
 
+	// Deployments
 	deployments, err := c.AppsV1().Deployments(ns).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "Found %d deployments:\n", len(iks.Items))
+	fmt.Fprintf(out, "Found %d deployments:\n", len(deployments.Items))
 	for _, deployment := range deployments.Items {
 		ref := deployment
 		data, err := kubernetes.ToYAML(&ref)
@@ -148,6 +150,37 @@ func dumpNamespace(ctx context.Context, c client.Client, ns string, out *os.File
 		fmt.Fprintf(out, "---\n%s\n---\n", string(data))
 	}
 
+	// IntegrationPlatforms
+	pls, err := camelClient.CamelV1().IntegrationPlatforms(ns).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "Found %d platforms:\n", len(pls.Items))
+	for _, p := range pls.Items {
+		ref := p
+		pdata, err := kubernetes.ToYAML(&ref)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "---\n%s\n---\n", string(pdata))
+	}
+
+	// CamelCatalogs
+	cat, err := camelClient.CamelV1().CamelCatalogs(ns).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "Found %d catalogs:\n", len(pls.Items))
+	for _, c := range cat.Items {
+		ref := c
+		cdata, err := kubernetes.ToYAML(&ref)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "---\n%s\n---\n", string(cdata))
+	}
+
+	// Pods and Logs
 	lst, err := c.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return err
@@ -173,13 +206,13 @@ func dumpNamespace(ctx context.Context, c client.Client, ns string, out *os.File
 	return nil
 }
 
-func dumpConditions(prefix string, conditions []v1.PodCondition, out *os.File) {
+func dumpConditions(prefix string, conditions []v1.PodCondition, out io.Writer) {
 	for _, cond := range conditions {
 		fmt.Fprintf(out, "%scondition type=%s, status=%s, reason=%s, message=%q\n", prefix, cond.Type, cond.Status, cond.Reason, cond.Message)
 	}
 }
 
-func dumpLogs(ctx context.Context, c client.Client, prefix string, ns string, name string, container string, out *os.File, logLines int) error {
+func dumpLogs(ctx context.Context, c client.Client, prefix string, ns string, name string, container string, out io.Writer, logLines int) error {
 	lines := int64(logLines)
 	stream, err := c.CoreV1().Pods(ns).GetLogs(name, &v1.PodLogOptions{
 		Container: container,
@@ -188,7 +221,7 @@ func dumpLogs(ctx context.Context, c client.Client, prefix string, ns string, na
 	if err != nil {
 		return err
 	}
-	defer stream.Close()
+
 	scanner := bufio.NewScanner(stream)
 	printed := false
 	for scanner.Scan() {
@@ -198,5 +231,5 @@ func dumpLogs(ctx context.Context, c client.Client, prefix string, ns string, na
 	if !printed {
 		fmt.Fprintf(out, "%s[no logs available]\n", prefix)
 	}
-	return nil
+	return stream.Close()
 }

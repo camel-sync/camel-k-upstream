@@ -22,82 +22,59 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
-	networking "k8s.io/api/networking/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/pointer"
 
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+	traitv1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1/trait"
 )
 
-// The Ingress trait can be used to expose the service associated with the integration
-// to the outside world with a Kubernetes Ingress.
-//
-// It's enabled by default whenever a Service is added to the integration (through the `service` trait).
-//
-// +camel-k:trait=ingress
 type ingressTrait struct {
-	BaseTrait `property:",squash"`
-	// **Required**. To configure the host exposed by the ingress.
-	Host string `property:"host" json:"host,omitempty"`
-	// To automatically add an ingress whenever the integration uses a HTTP endpoint consumer.
-	Auto *bool `property:"auto" json:"auto,omitempty"`
+	BaseTrait
+	traitv1.IngressTrait `property:",squash"`
 }
 
 func newIngressTrait() Trait {
 	return &ingressTrait{
 		BaseTrait: NewBaseTrait("ingress", 2400),
-		Host:      "",
+		IngressTrait: traitv1.IngressTrait{
+			Annotations: map[string]string{},
+			Host:        "",
+			Path:        "/",
+			PathType:    ptrFrom(networkingv1.PathTypePrefix),
+		},
 	}
 }
 
-// IsAllowedInProfile overrides default
+// IsAllowedInProfile overrides default.
 func (t *ingressTrait) IsAllowedInProfile(profile v1.TraitProfile) bool {
-	return profile == v1.TraitProfileKubernetes
+	return profile.Equal(v1.TraitProfileKubernetes)
 }
 
-func (t *ingressTrait) Configure(e *Environment) (bool, error) {
-	if IsFalse(t.Enabled) {
-		e.Integration.Status.SetCondition(
+func (t *ingressTrait) Configure(e *Environment) (bool, *TraitCondition, error) {
+	if e.Integration == nil {
+		return false, nil, nil
+	}
+	if !e.IntegrationInRunningPhases() {
+		return false, nil, nil
+	}
+	if !pointer.BoolDeref(t.Enabled, true) {
+		return false, NewIntegrationCondition(
 			v1.IntegrationConditionExposureAvailable,
 			corev1.ConditionFalse,
 			v1.IntegrationConditionIngressNotAvailableReason,
 			"explicitly disabled",
-		)
-		return false, nil
+		), nil
 	}
 
-	if !e.IntegrationInRunningPhases() {
-		return false, nil
-	}
-
-	if IsNilOrTrue(t.Auto) {
-		hasService := e.Resources.GetUserServiceForIntegration(e.Integration) != nil
-		hasHost := t.Host != ""
-		enabled := hasService && hasHost
-
-		if !enabled {
-			e.Integration.Status.SetCondition(
-				v1.IntegrationConditionExposureAvailable,
-				corev1.ConditionFalse,
-				v1.IntegrationConditionIngressNotAvailableReason,
-				"no host or service defined",
-			)
-
-			return false, nil
+	if pointer.BoolDeref(t.Auto, true) {
+		if e.Resources.GetUserServiceForIntegration(e.Integration) == nil {
+			return false, nil, nil
 		}
 	}
 
-	if t.Host == "" {
-		e.Integration.Status.SetCondition(
-			v1.IntegrationConditionExposureAvailable,
-			corev1.ConditionFalse,
-			v1.IntegrationConditionIngressNotAvailableReason,
-			"no host defined",
-		)
-
-		return false, errors.New("cannot Apply ingress trait: no host defined")
-	}
-
-	return true, nil
+	return true, nil, nil
 }
 
 func (t *ingressTrait) Apply(e *Environment) error {
@@ -106,27 +83,38 @@ func (t *ingressTrait) Apply(e *Environment) error {
 		return errors.New("cannot Apply ingress trait: no target service")
 	}
 
-	ingress := networking.Ingress{
+	ingress := networkingv1.Ingress{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "Ingress",
-			APIVersion: networking.SchemeGroupVersion.String(),
+			APIVersion: networkingv1.SchemeGroupVersion.String(),
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      service.Name,
-			Namespace: service.Namespace,
+			Name:        service.Name,
+			Namespace:   service.Namespace,
+			Annotations: t.Annotations,
 		},
-		Spec: networking.IngressSpec{
-			DefaultBackend: &networking.IngressBackend{
-				Service: &networking.IngressServiceBackend{
-					Name: service.Name,
-					Port: networking.ServiceBackendPort{
-						Name: "http",
-					},
-				},
-			},
-			Rules: []networking.IngressRule{
+		Spec: networkingv1.IngressSpec{
+			Rules: []networkingv1.IngressRule{
 				{
 					Host: t.Host,
+					IngressRuleValue: networkingv1.IngressRuleValue{
+						HTTP: &networkingv1.HTTPIngressRuleValue{
+							Paths: []networkingv1.HTTPIngressPath{
+								{
+									Path:     t.Path,
+									PathType: t.PathType,
+									Backend: networkingv1.IngressBackend{
+										Service: &networkingv1.IngressServiceBackend{
+											Name: service.Name,
+											Port: networkingv1.ServiceBackendPort{
+												Name: "http",
+											},
+										},
+									},
+								},
+							},
+						},
+					},
 				},
 			},
 		},
@@ -134,11 +122,7 @@ func (t *ingressTrait) Apply(e *Environment) error {
 
 	e.Resources.Add(&ingress)
 
-	message := fmt.Sprintf("%s(%s) -> %s(%s)",
-		ingress.Name,
-		t.Host,
-		ingress.Spec.DefaultBackend.Service.Name,
-		ingress.Spec.DefaultBackend.Service.Port.Name)
+	message := fmt.Sprintf("%s(%s) -> %s(%s)", ingress.Name, t.Host, service.Name, "http")
 
 	e.Integration.Status.SetCondition(
 		v1.IntegrationConditionExposureAvailable,

@@ -15,17 +15,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+// Package v1alpha1 is deprecated: use the v1 API instead
+// Deprecated
 package v1alpha1
 
 import (
 	"sort"
 
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// GetConditions --
+// GetConditions --.
 func (in *KameletStatus) GetConditions() []v1.ResourceCondition {
 	res := make([]v1.ResourceCondition, 0, len(in.Conditions))
 	for _, c := range in.Conditions {
@@ -34,32 +36,32 @@ func (in *KameletStatus) GetConditions() []v1.ResourceCondition {
 	return res
 }
 
-// GetType --
+// GetType --.
 func (c KameletCondition) GetType() string {
 	return string(c.Type)
 }
 
-// GetStatus --
+// GetStatus --.
 func (c KameletCondition) GetStatus() corev1.ConditionStatus {
 	return c.Status
 }
 
-// GetLastUpdateTime --
+// GetLastUpdateTime --.
 func (c KameletCondition) GetLastUpdateTime() metav1.Time {
 	return c.LastUpdateTime
 }
 
-// GetLastTransitionTime --
+// GetLastTransitionTime --.
 func (c KameletCondition) GetLastTransitionTime() metav1.Time {
 	return c.LastTransitionTime
 }
 
-// GetReason --
+// GetReason --.
 func (c KameletCondition) GetReason() string {
 	return c.Reason
 }
 
-// GetMessage --
+// GetMessage --.
 func (c KameletCondition) GetMessage() string {
 	return c.Message
 }
@@ -75,7 +77,7 @@ func (in *KameletStatus) GetCondition(condType KameletConditionType) *KameletCon
 	return nil
 }
 
-// SetCondition --
+// SetCondition --.
 func (in *KameletStatus) SetCondition(condType KameletConditionType, status corev1.ConditionStatus, reason string, message string) {
 	in.SetConditions(KameletCondition{
 		Type:               condType,
@@ -87,7 +89,7 @@ func (in *KameletStatus) SetCondition(condType KameletConditionType, status core
 	})
 }
 
-// SetErrorCondition --
+// SetErrorCondition --.
 func (in *KameletStatus) SetErrorCondition(condType KameletConditionType, reason string, err error) {
 	in.SetConditions(KameletCondition{
 		Type:               condType,
@@ -139,7 +141,7 @@ func (in *KameletStatus) RemoveCondition(condType KameletConditionType) {
 	in.Conditions = newConditions
 }
 
-// SortedDefinitionPropertiesKeys returns the sorted keys of the Kamelet definition properties
+// SortedDefinitionPropertiesKeys returns the sorted keys of the Kamelet definition properties.
 func (k *Kamelet) SortedDefinitionPropertiesKeys() []string {
 	if k.Spec.Definition == nil {
 		return []string{}
@@ -151,18 +153,18 @@ func (k *Kamelet) SortedDefinitionPropertiesKeys() []string {
 	res := make([]string, len(props))
 	i := 0
 	for key := range props {
-		res[i] = string(key)
+		res[i] = key
 		i++
 	}
 	sort.Strings(res)
 	return res
 }
 
-// SortedTypesKeys returns the sorted keys of the Kamelet spec types
-func (k *Kamelet) SortedTypesKeys() []EventSlot {
-	types := k.Spec.Types
+// SortedTypesKeys returns the sorted keys of the Kamelet spec types.
+func (k *Kamelet) SortedTypesKeys() []TypeSlot {
+	types := k.Spec.DataTypes
 	if len(types) == 0 {
-		return []EventSlot{}
+		return []TypeSlot{}
 	}
 	strs := make([]string, len(types))
 	i := 0
@@ -171,9 +173,9 @@ func (k *Kamelet) SortedTypesKeys() []EventSlot {
 		i++
 	}
 	sort.Strings(strs)
-	res := make([]EventSlot, len(types))
+	res := make([]TypeSlot, len(types))
 	for i, s := range strs {
-		res[i] = EventSlot(s)
+		res[i] = TypeSlot(s)
 	}
 	return res
 }
@@ -192,17 +194,7 @@ func ValidKameletProperties(kamelet *Kamelet) bool {
 	return true
 }
 
-func ValidKameletTemplate(kamelet *Kamelet) bool {
-	if kamelet == nil {
-		return true
-	}
-	if kamelet.Spec.Template != nil && kamelet.Spec.Flow != nil {
-		return false
-	}
-	return true
-}
-
-// NewKamelet creates a new kamelet
+// NewKamelet creates a new Kamelet.
 func NewKamelet(namespace string, name string) Kamelet {
 	return Kamelet{
 		TypeMeta: metav1.TypeMeta{
@@ -216,7 +208,7 @@ func NewKamelet(namespace string, name string) Kamelet {
 	}
 }
 
-// NewKameletList creates a new list of kamelets
+// NewKameletList creates a new list of Kamelets.
 func NewKameletList() KameletList {
 	return KameletList{
 		TypeMeta: metav1.TypeMeta{

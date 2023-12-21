@@ -20,7 +20,7 @@ package build
 import (
 	"context"
 
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
 )
 
 func newInitializeRoutineAction() Action {
@@ -31,18 +31,20 @@ type initializeRoutineAction struct {
 	baseAction
 }
 
-// Name returns a common name of the action
+// Name returns a common name of the action.
 func (action *initializeRoutineAction) Name() string {
 	return "initialize"
 }
 
-// CanHandle tells whether this action can handle the build
+// CanHandle tells whether this action can handle the build.
 func (action *initializeRoutineAction) CanHandle(build *v1.Build) bool {
 	return build.Status.Phase == "" || build.Status.Phase == v1.BuildPhaseInitialization
 }
 
-// Handle handles the builds
+// Handle handles the builds.
 func (action *initializeRoutineAction) Handle(ctx context.Context, build *v1.Build) (*v1.Build, error) {
+	action.L.Info("Initializing Build")
+
 	build.Status.Phase = v1.BuildPhaseScheduling
 
 	return build, nil

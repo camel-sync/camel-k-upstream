@@ -1,3 +1,4 @@
+//go:build integration
 // +build integration
 
 // To enable compilation of this file in Goland, go to "Settings -> Go -> Vendoring & Build Tags -> Custom Tags" and add "integration"
@@ -28,24 +29,19 @@ import (
 
 	v1 "k8s.io/api/core/v1"
 
-	. "github.com/apache/camel-k/e2e/support"
-	camelv1 "github.com/apache/camel-k/pkg/apis/camel/v1"
+	. "github.com/apache/camel-k/v2/e2e/support"
+	camelv1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
 )
 
 func TestRunSimpleKotlinExamples(t *testing.T) {
-	WithNewTestNamespace(t, func(ns string) {
-		Expect(Kamel("install", "-n", ns).Execute()).To(Succeed())
+	RegisterTestingT(t)
 
-		t.Run("run kotlin", func(t *testing.T) {
-			Expect(Kamel("run", "-n", ns, "files/kotlin.kts").Execute()).To(Succeed())
-			Eventually(IntegrationPodPhase(ns, "kotlin"), TestTimeoutMedium).Should(Equal(v1.PodRunning))
-			Eventually(IntegrationCondition(ns, "kotlin", camelv1.IntegrationConditionReady), TestTimeoutShort).Should(Equal(v1.ConditionTrue))
-			Eventually(IntegrationLogs(ns, "kotlin"), TestTimeoutShort).Should(ContainSubstring("Magicstring!"))
-			Expect(Kamel("delete", "--all", "-n", ns).Execute()).To(Succeed())
-		})
-
-		t.Run("init run Kotlin", func(t *testing.T) {
-			RunInitGeneratedExample(camelv1.LanguageKotlin, ns, t)
-		})
+	t.Run("run kotlin", func(t *testing.T) {
+		Expect(KamelRunWithID(operatorID, ns, "files/kotlin.kts").Execute()).To(Succeed())
+		Eventually(IntegrationPodPhase(ns, "kotlin"), TestTimeoutLong).Should(Equal(v1.PodRunning))
+		Eventually(IntegrationConditionStatus(ns, "kotlin", camelv1.IntegrationConditionReady), TestTimeoutShort).Should(Equal(v1.ConditionTrue))
+		Eventually(IntegrationLogs(ns, "kotlin"), TestTimeoutShort).Should(ContainSubstring("Magicstring!"))
 	})
+
+	Expect(Kamel("delete", "--all", "-n", ns).Execute()).To(Succeed())
 }

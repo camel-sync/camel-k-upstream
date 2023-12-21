@@ -20,7 +20,7 @@ package knative
 import (
 	"testing"
 
-	"github.com/apache/camel-k/pkg/apis/camel/v1/knative"
+	"github.com/apache/camel-k/v2/pkg/apis/camel/v1/knative"
 	"github.com/stretchr/testify/assert"
 	v1 "k8s.io/api/core/v1"
 )
@@ -156,6 +156,8 @@ func TestAPIs(t *testing.T) {
 }
 
 func checkValidRefs(t *testing.T, refs []v1.ObjectReference) {
+	t.Helper()
+
 	assert.True(t, len(refs) > 0)
 	for _, ref := range refs {
 		assert.NotNil(t, ref.Name)

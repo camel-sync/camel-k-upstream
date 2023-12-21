@@ -18,69 +18,66 @@ limitations under the License.
 package trait
 
 import (
-	"github.com/apache/camel-k/pkg/util/envvar"
+	"k8s.io/utils/pointer"
+
+	traitv1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1/trait"
+	"github.com/apache/camel-k/v2/pkg/util/envvar"
 )
 
 const (
-	envVarQuarkusLogLevel                  = "QUARKUS_LOG_LEVEL"
-	envVarQuarkusLogConsoleColor           = "QUARKUS_LOG_CONSOLE_COLOR"
-	envVarQuarkusLogConsoleFormat          = "QUARKUS_LOG_CONSOLE_FORMAT"
-	envVarQuarkusLogConsoleJson            = "QUARKUS_LOG_CONSOLE_JSON"
-	envVarQuarkusLogConsoleJsonPrettyPrint = "QUARKUS_LOG_CONSOLE_JSON_PRETTY_PRINT"
+	envVarQuarkusConsoleColor     = "QUARKUS_CONSOLE_COLOR"
+	envVarQuarkusLogLevel         = "QUARKUS_LOG_LEVEL"
+	envVarQuarkusLogConsoleFormat = "QUARKUS_LOG_CONSOLE_FORMAT"
+	// nolint: gosec // no sensitive credentials
+	envVarQuarkusLogConsoleJSON            = "QUARKUS_LOG_CONSOLE_JSON"
+	envVarQuarkusLogConsoleJSONPrettyPrint = "QUARKUS_LOG_CONSOLE_JSON_PRETTY_PRINT"
 	defaultLogLevel                        = "INFO"
 )
 
-// The Logging trait is used to configure Integration runtime logging options (such as color and format).
-// The logging backend is provided by Quarkus, whose configuration is documented at https://quarkus.io/guides/logging.
-//
-// +camel-k:trait=logging
 type loggingTrait struct {
-	BaseTrait `property:",squash"`
-	// Colorize the log output
-	Color *bool `property:"color" json:"color,omitempty"`
-	// Logs message format
-	Format string `property:"format" json:"format,omitempty"`
-	// Adjust the logging level (defaults to INFO)
-	Level string `property:"level" json:"level,omitempty"`
-	// Output the logs in JSON
-	Json *bool `property:"json" json:"json,omitempty"`
-	// Enable "pretty printing" of the JSON logs
-	JsonPrettyPrint *bool `property:"json-pretty-print" json:"jsonPrettyPrint,omitempty"`
+	BaseTrait
+	traitv1.LoggingTrait `property:",squash"`
 }
 
 func newLoggingTraitTrait() Trait {
 	return &loggingTrait{
 		BaseTrait: NewBaseTrait("logging", 800),
-		Level:     defaultLogLevel,
+		LoggingTrait: traitv1.LoggingTrait{
+			Level: defaultLogLevel,
+		},
 	}
 }
 
-func (l loggingTrait) Configure(environment *Environment) (bool, error) {
-	if IsFalse(l.Enabled) {
-		return false, nil
+func (l loggingTrait) Configure(e *Environment) (bool, *TraitCondition, error) {
+	if e.Integration == nil {
+		return false, nil, nil
 	}
 
-	return environment.IntegrationInRunningPhases(), nil
+	if !pointer.BoolDeref(l.Enabled, true) {
+		return false, NewIntegrationConditionUserDisabled(), nil
+	}
+
+	return e.IntegrationInRunningPhases(), nil, nil
 }
 
-func (l loggingTrait) Apply(environment *Environment) error {
-	envvar.SetVal(&environment.EnvVars, envVarQuarkusLogLevel, l.Level)
+func (l loggingTrait) Apply(e *Environment) error {
+	envvar.SetVal(&e.EnvVars, envVarQuarkusLogLevel, l.Level)
 
 	if l.Format != "" {
-		envvar.SetVal(&environment.EnvVars, envVarQuarkusLogConsoleFormat, l.Format)
+		envvar.SetVal(&e.EnvVars, envVarQuarkusLogConsoleFormat, l.Format)
 	}
 
-	if IsTrue(l.Json) {
-		envvar.SetVal(&environment.EnvVars, envVarQuarkusLogConsoleJson, True)
-		if IsTrue(l.JsonPrettyPrint) {
-			envvar.SetVal(&environment.EnvVars, envVarQuarkusLogConsoleJsonPrettyPrint, True)
+	if pointer.BoolDeref(l.JSON, false) {
+		envvar.SetVal(&e.EnvVars, envVarQuarkusLogConsoleJSON, True)
+		if pointer.BoolDeref(l.JSONPrettyPrint, false) {
+			envvar.SetVal(&e.EnvVars, envVarQuarkusLogConsoleJSONPrettyPrint, True)
 		}
 	} else {
 		// If the trait is false OR unset, we default to false.
-		envvar.SetVal(&environment.EnvVars, envVarQuarkusLogConsoleJson, False)
+		envvar.SetVal(&e.EnvVars, envVarQuarkusLogConsoleJSON, False)
 
-		if IsNilOrTrue(l.Color) {
-			envvar.SetVal(&environment.EnvVars, envVarQuarkusLogConsoleColor, True)
+		if pointer.BoolDeref(l.Color, true) {
+			envvar.SetVal(&e.EnvVars, envVarQuarkusConsoleColor, True)
 		}
 	}
 

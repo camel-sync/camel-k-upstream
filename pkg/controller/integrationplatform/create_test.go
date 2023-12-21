@@ -22,11 +22,11 @@ import (
 	"strings"
 	"testing"
 
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
-	"github.com/apache/camel-k/pkg/platform"
-	"github.com/apache/camel-k/pkg/resources"
-	"github.com/apache/camel-k/pkg/util/log"
-	"github.com/apache/camel-k/pkg/util/test"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+	"github.com/apache/camel-k/v2/pkg/platform"
+	"github.com/apache/camel-k/v2/pkg/resources"
+	"github.com/apache/camel-k/v2/pkg/util/log"
+	"github.com/apache/camel-k/v2/pkg/util/test"
 	"github.com/rs/xid"
 	"github.com/stretchr/testify/assert"
 	k8sclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -59,7 +59,10 @@ func TestCreate(t *testing.T) {
 	assert.Nil(t, err)
 	assert.NotEmpty(t, list.Items)
 
-	for _, k := range resources.ResourcesWithPrefix("/camel-catelog-") {
+	items, err := resources.WithPrefix("/camel-catelog-")
+	assert.Nil(t, err)
+
+	for _, k := range items {
 		found := false
 
 		for _, c := range list.Items {

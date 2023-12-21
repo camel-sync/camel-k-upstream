@@ -1,3 +1,4 @@
+//go:build integration
 // +build integration
 
 // To enable compilation of this file in Goland, go to "Settings -> Go -> Vendoring & Build Tags -> Custom Tags" and add "integration"
@@ -28,54 +29,50 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/stretchr/testify/assert"
 
-	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
+	corev1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 
 	ctrl "sigs.k8s.io/controller-runtime/pkg/client"
 
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 
-	. "github.com/apache/camel-k/e2e/support"
-	camelv1 "github.com/apache/camel-k/pkg/apis/camel/v1"
-	"github.com/apache/camel-k/pkg/util/openshift"
+	. "github.com/apache/camel-k/v2/e2e/support"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+	"github.com/apache/camel-k/v2/pkg/util/openshift"
 )
 
 func TestPrometheusTrait(t *testing.T) {
-	WithNewTestNamespace(t, func(ns string) {
-		ocp, err := openshift.IsOpenShift(TestClient())
-		assert.Nil(t, err)
+	RegisterTestingT(t)
 
-		// Do not create PodMonitor for the time being as CI test runs on OCP 3.11
-		createPodMonitor := false
+	ocp, err := openshift.IsOpenShift(TestClient())
+	assert.Nil(t, err)
+	// Do not create PodMonitor for the time being as CI test runs on OCP 3.11
+	createPodMonitor := false
+	Expect(KamelRunWithID(operatorID, ns, "files/Java.java",
+		"-t", "prometheus.enabled=true",
+		"-t", fmt.Sprintf("prometheus.pod-monitor=%v", createPodMonitor)).Execute()).To(Succeed())
+	Eventually(IntegrationPodPhase(ns, "java"), TestTimeoutLong).Should(Equal(corev1.PodRunning))
+	Eventually(IntegrationConditionStatus(ns, "java", v1.IntegrationConditionReady), TestTimeoutShort).Should(Equal(corev1.ConditionTrue))
+	Eventually(IntegrationLogs(ns, "java"), TestTimeoutShort).Should(ContainSubstring("Magicstring!"))
 
-		Expect(Kamel("install", "-n", ns).Execute()).To(Succeed())
-
-		Expect(Kamel("run", "-n", ns, "files/Java.java",
-			"-t", "prometheus.enabled=true",
-			"-t", fmt.Sprintf("prometheus.pod-monitor=%v", createPodMonitor)).Execute()).To(Succeed())
-		Eventually(IntegrationPodPhase(ns, "java"), TestTimeoutLong).Should(Equal(v1.PodRunning))
-		Eventually(IntegrationCondition(ns, "java", camelv1.IntegrationConditionReady), TestTimeoutShort).Should(Equal(v1.ConditionTrue))
-		Eventually(IntegrationLogs(ns, "java"), TestTimeoutShort).Should(ContainSubstring("Magicstring!"))
-
-		t.Run("Metrics endpoint works", func(t *testing.T) {
-			pod := IntegrationPod(ns, "java")
-			response, err := TestClient().CoreV1().RESTClient().Get().
-				AbsPath(fmt.Sprintf("/api/v1/namespaces/%s/pods/%s/proxy/q/metrics", ns, pod().Name)).DoRaw(TestContext)
-			if err != nil {
-				assert.Fail(t, err.Error())
-			}
-			assert.Contains(t, string(response), "camel.route.exchanges.total")
-		})
-
-		if ocp && createPodMonitor {
-			t.Run("PodMonitor is created", func(t *testing.T) {
-				sm := podMonitor(ns, "java")
-				Eventually(sm, TestTimeoutShort).ShouldNot(BeNil())
-			})
+	t.Run("Metrics endpoint works", func(t *testing.T) {
+		pod := IntegrationPod(ns, "java")
+		response, err := TestClient().CoreV1().RESTClient().Get().
+			AbsPath(fmt.Sprintf("/api/v1/namespaces/%s/pods/%s/proxy/q/metrics", ns, pod().Name)).DoRaw(TestContext)
+		if err != nil {
+			assert.Fail(t, err.Error())
 		}
-
-		Expect(Kamel("delete", "--all", "-n", ns).Execute()).To(Succeed())
+		assert.Contains(t, string(response), "camel_exchanges_total")
 	})
+
+	if ocp && createPodMonitor {
+		t.Run("PodMonitor is created", func(t *testing.T) {
+			sm := podMonitor(ns, "java")
+			Eventually(sm, TestTimeoutShort).ShouldNot(BeNil())
+		})
+	}
+
+	Expect(Kamel("delete", "--all", "-n", ns).Execute()).To(Succeed())
 }
 
 func podMonitor(ns string, name string) func() *monitoringv1.PodMonitor {
@@ -86,7 +83,7 @@ func podMonitor(ns string, name string) func() *monitoringv1.PodMonitor {
 			Name:      name,
 		}
 		err := TestClient().Get(TestContext, key, &pm)
-		if err != nil && errors.IsNotFound(err) {
+		if err != nil && k8serrors.IsNotFound(err) {
 			return nil
 		} else if err != nil {
 			panic(err)

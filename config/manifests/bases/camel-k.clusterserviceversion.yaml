@@ -22,15 +22,16 @@ metadata:
     capabilities: Full Lifecycle
     categories: Integration & Delivery
     certified: "false"
-    containerImage: docker.io/apache/camel-k:1.6.1-SNAPSHOT
-    createdAt: 2021-05-03T07:48:00Z
-    description: Apache Camel K is a lightweight integration platform, born on Kubernetes, with serverless superpowers.
-    operators.operatorframework.io/builder: operator-sdk-v1.3.0
+    containerImage: docker.io/apache/camel-k:2.2.0-SNAPSHOT
+    createdAt: 2023-12-15T10:08:46Z
+    description: Apache Camel K is a lightweight integration platform, born on Kubernetes,
+      with serverless superpowers.
+    operators.operatorframework.io/builder: operator-sdk-v1.16.0
     operators.operatorframework.io/internal-objects: '["builds.camel.apache.org","integrationkits.camel.apache.org","camelcatalogs.camel.apache.org"]'
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v2
     repository: https://github.com/apache/camel-k
     support: Camel
-  name: camel-k.v1.6.1
+  name: camel-k.v2.2.0
   namespace: placeholder
 spec:
   apiservicedefinitions: {}
@@ -51,7 +52,8 @@ spec:
       kind: IntegrationKit
       name: integrationkits.camel.apache.org
       version: v1
-    - description: IntegrationPlatform is the Schema for the integrationplatforms API
+    - description: IntegrationPlatform is the Schema for the integrationplatforms
+        API
       displayName: Integration Platform
       kind: IntegrationPlatform
       name: integrationplatforms.camel.apache.org
@@ -61,8 +63,18 @@ spec:
       kind: Integration
       name: integrations.camel.apache.org
       version: v1
-    - description: KameletBinding is the Schema for the kamelets binding API
-      displayName: Kamelet Binding
+    - description: Pipe is the Schema for the pipes API
+      displayName: Pipe
+      kind: Pipe
+      name: pipes.camel.apache.org
+      version: v1
+    - description: Kamelet is the Schema for the kamelets API
+      displayName: Kamelet
+      kind: Kamelet
+      name: kamelets.camel.apache.org
+      version: v1
+    - description: KameletBinding is the Schema for the kameletbindings API
+      displayName: KameletBinding
       kind: KameletBinding
       name: kameletbindings.camel.apache.org
       version: v1alpha1
@@ -151,7 +163,8 @@ spec:
   minKubeVersion: 1.11.0
   provider:
     name: The Apache Software Foundation
+  replaces: camel-k-operator.v2.1.0
   selector:
     matchLabels:
       name: camel-k-operator
-  version: 1.6.1-snapshot
+  version: 2.2.0

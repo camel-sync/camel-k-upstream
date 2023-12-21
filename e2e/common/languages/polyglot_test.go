@@ -1,3 +1,4 @@
+//go:build integration
 // +build integration
 
 // To enable compilation of this file in Goland, go to "Settings -> Go -> Vendoring & Build Tags -> Custom Tags" and add "integration"
@@ -28,21 +29,20 @@ import (
 
 	v1 "k8s.io/api/core/v1"
 
-	. "github.com/apache/camel-k/e2e/support"
-	camelv1 "github.com/apache/camel-k/pkg/apis/camel/v1"
+	. "github.com/apache/camel-k/v2/e2e/support"
+	camelv1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
 )
 
 func TestRunPolyglotExamples(t *testing.T) {
-	WithNewTestNamespace(t, func(ns string) {
-		Expect(Kamel("install", "-n", ns).Execute()).To(Succeed())
+	RegisterTestingT(t)
 
-		t.Run("run polyglot", func(t *testing.T) {
-			Expect(Kamel("run", "-n", ns, "--name", "polyglot", "files/js-polyglot.js", "files/yaml-polyglot.yaml").Execute()).To(Succeed())
-			Eventually(IntegrationPodPhase(ns, "polyglot"), TestTimeoutMedium).Should(Equal(v1.PodRunning))
-			Eventually(IntegrationCondition(ns, "polyglot", camelv1.IntegrationConditionReady), TestTimeoutShort).Should(Equal(v1.ConditionTrue))
-			Eventually(IntegrationLogs(ns, "polyglot"), TestTimeoutShort).Should(ContainSubstring("Magicpolyglot-yaml"))
-			Eventually(IntegrationLogs(ns, "polyglot"), TestTimeoutShort).Should(ContainSubstring("Magicpolyglot-js"))
-			Expect(Kamel("delete", "--all", "-n", ns).Execute()).To(Succeed())
-		})
+	t.Run("run polyglot", func(t *testing.T) {
+		Expect(KamelRunWithID(operatorID, ns, "--name", "polyglot", "files/js-polyglot.js", "files/yaml-polyglot.yaml").Execute()).To(Succeed())
+		Eventually(IntegrationPodPhase(ns, "polyglot"), TestTimeoutLong).Should(Equal(v1.PodRunning))
+		Eventually(IntegrationConditionStatus(ns, "polyglot", camelv1.IntegrationConditionReady), TestTimeoutShort).Should(Equal(v1.ConditionTrue))
+		Eventually(IntegrationLogs(ns, "polyglot"), TestTimeoutShort).Should(ContainSubstring("Magicpolyglot-yaml"))
+		Eventually(IntegrationLogs(ns, "polyglot"), TestTimeoutShort).Should(ContainSubstring("Magicpolyglot-js"))
 	})
+
+	Expect(Kamel("delete", "--all", "-n", ns).Execute()).To(Succeed())
 }

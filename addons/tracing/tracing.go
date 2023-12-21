@@ -18,32 +18,46 @@ limitations under the License.
 package tracing
 
 import (
-	"github.com/apache/camel-k/addons/tracing/discovery"
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
-	"github.com/apache/camel-k/pkg/trait"
-	"github.com/apache/camel-k/pkg/util"
+	"k8s.io/utils/pointer"
+
+	"github.com/apache/camel-k/v2/addons/tracing/discovery"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+	traitv1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1/trait"
+	"github.com/apache/camel-k/v2/pkg/trait"
+	"github.com/apache/camel-k/v2/pkg/util"
 )
 
-// The Tracing trait can be used to automatically publish tracing information to an
-// OpenTracing compatible collector.
+// WARNING: The Tracing trait has been **deprecated** in favor of the xref:traits:telemetry.adoc[Telemetry] trait.
+//
+// The Tracing trait can be used to automatically publish tracing information to an OpenTracing compatible collector.
 //
 // The trait is able to automatically discover the tracing endpoint available in the namespace (supports **Jaeger**).
 //
 // The Tracing trait is disabled by default.
 //
-// +camel-k:trait=tracing
-type tracingTrait struct {
-	trait.BaseTrait `property:",squash"`
+// WARNING: The Tracing trait can't be enabled at the same time as the Telemetry trait.
+//
+// +camel-k:trait=tracing.
+type Trait struct {
+	traitv1.Trait `property:",squash" json:",inline"`
 	// Enables automatic configuration of the trait, including automatic discovery of the tracing endpoint.
+	// +kubebuilder:default=true
 	Auto *bool `property:"auto" json:"auto,omitempty"`
 	// The name of the service that publishes tracing data (defaults to the integration name)
 	ServiceName string `property:"service-name" json:"serviceName,omitempty"`
 	// The target endpoint of the OpenTracing service (automatically discovered by default)
 	Endpoint string `property:"endpoint" json:"endpoint,omitempty"`
 	// The sampler type (default "const")
+	// +kubebuilder:default="const"
 	SamplerType *string `property:"sampler-type" json:"samplerType,omitempty"`
 	// The sampler specific param (default "1")
+	// +kubebuilder:default="1"
 	SamplerParam *string `property:"sampler-param" json:"samplerParam,omitempty"`
+}
+
+type tracingTrait struct {
+	trait.BaseTrait
+	Trait `property:",squash"`
 }
 
 const (
@@ -68,24 +82,24 @@ var (
 	defaultSamplerParam = "1"
 )
 
-// NewTracingTrait --
+// NewTracingTrait --.
 func NewTracingTrait() trait.Trait {
 	return &tracingTrait{
 		BaseTrait: trait.NewBaseTrait("tracing", trait.TraitOrderBeforeControllerCreation),
 	}
 }
 
-func (t *tracingTrait) Configure(e *trait.Environment) (bool, error) {
-	if trait.IsNilOrFalse(t.Enabled) {
-		return false, nil
+func (t *tracingTrait) Configure(e *trait.Environment) (bool, *trait.TraitCondition, error) {
+	if e.Integration == nil || !pointer.BoolDeref(t.Enabled, false) {
+		return false, nil, nil
 	}
 
-	if trait.IsNilOrTrue(t.Auto) {
+	if pointer.BoolDeref(t.Auto, true) {
 		if t.Endpoint == "" {
 			for _, locator := range discovery.TracingLocators {
-				endpoint, err := locator.FindEndpoint(e.C, t.Client, t.L, e)
+				endpoint, err := locator.FindEndpoint(e.Ctx, t.Client, t.L, e)
 				if err != nil {
-					return false, err
+					return false, nil, err
 				}
 				if endpoint != "" {
 					t.L.Infof("Using tracing endpoint: %s", endpoint)
@@ -108,11 +122,10 @@ func (t *tracingTrait) Configure(e *trait.Environment) (bool, error) {
 		}
 	}
 
-	return true, nil
+	return true, nil, nil
 }
 
 func (t *tracingTrait) Apply(e *trait.Environment) error {
-
 	util.StringSliceUniqueAdd(&e.Integration.Status.Capabilities, v1.CapabilityTracing)
 
 	if e.CamelCatalog != nil {

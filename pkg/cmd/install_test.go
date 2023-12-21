@@ -23,14 +23,16 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
-	"github.com/apache/camel-k/pkg/util/olm"
-	"github.com/apache/camel-k/pkg/util/test"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+	"github.com/apache/camel-k/v2/pkg/util/test"
 )
 
 const cmdInstall = "install"
 
+// nolint: unparam
 func initializeInstallCmdOptions(t *testing.T) (*installCmdOptions, *cobra.Command, RootCmdOptions) {
+	t.Helper()
+
 	options, rootCmd := kamelTestPreAddCommandInit()
 	installCmdOptions := addTestInstallCmd(*options, rootCmd)
 	kamelTestPostAddCommandInit(t, rootCmd)
@@ -61,18 +63,18 @@ func TestInstallNoFlag(t *testing.T) {
 	assert.Equal(t, false, installCmdOptions.ClusterSetupOnly)
 	assert.Equal(t, false, installCmdOptions.SkipOperatorSetup)
 	assert.Equal(t, false, installCmdOptions.SkipClusterSetup)
+	assert.Equal(t, false, installCmdOptions.SkipDefaultKameletsSetup)
 	assert.Equal(t, false, installCmdOptions.ExampleSetup)
 	assert.Equal(t, false, installCmdOptions.Global)
-	assert.Equal(t, false, installCmdOptions.KanikoBuildCache)
 	assert.Equal(t, false, installCmdOptions.Save)
 	assert.Equal(t, false, installCmdOptions.Force)
 	assert.Equal(t, true, installCmdOptions.Olm)
-	assert.Equal(t, olm.DefaultOperatorName, installCmdOptions.olmOptions.OperatorName)
-	assert.Equal(t, olm.DefaultPackage, installCmdOptions.olmOptions.Package)
-	assert.Equal(t, olm.DefaultChannel, installCmdOptions.olmOptions.Channel)
-	assert.Equal(t, olm.DefaultSource, installCmdOptions.olmOptions.Source)
-	assert.Equal(t, olm.DefaultSourceNamespace, installCmdOptions.olmOptions.SourceNamespace)
-	assert.Equal(t, olm.DefaultGlobalNamespace, installCmdOptions.olmOptions.GlobalNamespace)
+	assert.Equal(t, "", installCmdOptions.olmOptions.OperatorName)
+	assert.Equal(t, "", installCmdOptions.olmOptions.Package)
+	assert.Equal(t, "", installCmdOptions.olmOptions.Channel)
+	assert.Equal(t, "", installCmdOptions.olmOptions.Source)
+	assert.Equal(t, "", installCmdOptions.olmOptions.SourceNamespace)
+	assert.Equal(t, "", installCmdOptions.olmOptions.GlobalNamespace)
 	assert.Equal(t, int32(8081), installCmdOptions.HealthPort)
 	assert.Equal(t, false, installCmdOptions.Monitoring)
 	assert.Equal(t, int32(8080), installCmdOptions.MonitoringPort)
@@ -103,6 +105,13 @@ func TestInstallBuildStrategyFlag(t *testing.T) {
 	_, err := test.ExecuteCommand(rootCmd, cmdInstall, "--build-strategy", "someString")
 	assert.Nil(t, err)
 	assert.Equal(t, "someString", installCmdOptions.BuildStrategy)
+}
+
+func TestInstallBuildOrderStrategyFlag(t *testing.T) {
+	installCmdOptions, rootCmd, _ := initializeInstallCmdOptions(t)
+	_, err := test.ExecuteCommand(rootCmd, cmdInstall, "--build-order-strategy", "someString")
+	assert.Nil(t, err)
+	assert.Equal(t, "someString", installCmdOptions.BuildOrderStrategy)
 }
 
 func TestInstallBuildTimeoutFlag(t *testing.T) {
@@ -153,18 +162,13 @@ func TestInstallHealthFlag(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, int32(7777), installCmdOptions.HealthPort)
 }
-func TestInstallHttpProxySecretFlag(t *testing.T) {
-	installCmdOptions, rootCmd, _ := initializeInstallCmdOptions(t)
-	_, err := test.ExecuteCommand(rootCmd, cmdInstall, "--http-proxy-secret", "someString")
-	assert.Nil(t, err)
-	assert.Equal(t, "someString", installCmdOptions.HTTPProxySecret)
-}
 
-func TestInstallKanikoBuildCacheFlag(t *testing.T) {
+func TestInstallBuildPublishStrategyOptions(t *testing.T) {
 	installCmdOptions, rootCmd, _ := initializeInstallCmdOptions(t)
-	_, err := test.ExecuteCommand(rootCmd, cmdInstall, "--kaniko-build-cache")
+	_, err := test.ExecuteCommand(rootCmd, cmdInstall, "--build-publish-strategy-option", "foo1=bar1", "--build-publish-strategy-option", "foo2=bar2")
 	assert.Nil(t, err)
-	assert.Equal(t, true, installCmdOptions.KanikoBuildCache)
+	assert.Equal(t, "foo1=bar1", installCmdOptions.BuildPublishStrategyOptions[0])
+	assert.Equal(t, "foo2=bar2", installCmdOptions.BuildPublishStrategyOptions[1])
 }
 
 func TestInstallLocalRepositoryFlag(t *testing.T) {
@@ -321,6 +325,13 @@ func TestInstallSkipRegistrySetupFlag(t *testing.T) {
 	assert.Equal(t, true, installCmdOptions.SkipRegistrySetup)
 }
 
+func TestInstallSkipDefaultKameletsSetupFlag(t *testing.T) {
+	installCmdOptions, rootCmd, _ := initializeInstallCmdOptions(t)
+	_, err := test.ExecuteCommand(rootCmd, cmdInstall, "--skip-default-kamelets-setup")
+	assert.Nil(t, err)
+	assert.Equal(t, true, installCmdOptions.SkipDefaultKameletsSetup)
+}
+
 func TestInstallTraitProfileFlag(t *testing.T) {
 	installCmdOptions, rootCmd, _ := initializeInstallCmdOptions(t)
 	_, err := test.ExecuteCommand(rootCmd, cmdInstall, "--trait-profile", "someString")
@@ -350,7 +361,8 @@ func TestDecodeMavenSettings(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Nil(t, val.SecretKeyRef)
 	assert.Equal(t, "maven-settings", val.ConfigMapKeyRef.Name)
-	assert.Empty(t, val.ConfigMapKeyRef.Key)
+	// Default name
+	assert.Equal(t, "settings.xml", val.ConfigMapKeyRef.Key)
 
 	// Secrets
 	val, err = decodeMavenSettings("secret:maven-settings-secret/s.xml")
@@ -363,7 +375,8 @@ func TestDecodeMavenSettings(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Nil(t, val.ConfigMapKeyRef)
 	assert.Equal(t, "maven-settings-secret", val.SecretKeyRef.Name)
-	assert.Empty(t, val.SecretKeyRef.Key)
+	// Default name
+	assert.Equal(t, "settings.xml", val.SecretKeyRef.Key)
 
 	// Errors
 	_, err = decodeMavenSettings("something:maven-settings-secret/s.xml")
@@ -388,4 +401,67 @@ func TestInstallMavenExtension(t *testing.T) {
 		"--maven-extension", "fi.yle.tools:aws-maven:1.4.2")
 	assert.Nil(t, err)
 	assert.Equal(t, "fi.yle.tools:aws-maven:1.4.2", installCmdOptions.MavenExtensions[0])
+}
+
+func TestInstallInfoLogging(t *testing.T) {
+	installCmdOptions, rootCmd, _ := initializeInstallCmdOptions(t)
+	_, err := test.ExecuteCommand(rootCmd, cmdInstall)
+	assert.Nil(t, err)
+	assert.Equal(t, "info", installCmdOptions.LogLevel)
+}
+
+func TestInstallInfoLogging1(t *testing.T) {
+	installCmdOptions, rootCmd, _ := initializeInstallCmdOptions(t)
+	_, err := test.ExecuteCommand(rootCmd, cmdInstall, "-z", "0")
+	assert.Nil(t, err)
+	assert.Equal(t, "0", installCmdOptions.LogLevel)
+}
+
+func TestInstallInfoLogging2(t *testing.T) {
+	installCmdOptions, rootCmd, _ := initializeInstallCmdOptions(t)
+	_, err := test.ExecuteCommand(rootCmd, cmdInstall, "--log-level", "0")
+	assert.Nil(t, err)
+	assert.Equal(t, "0", installCmdOptions.LogLevel)
+}
+
+func TestInstallInfoLogging3(t *testing.T) {
+	installCmdOptions, rootCmd, _ := initializeInstallCmdOptions(t)
+	_, err := test.ExecuteCommand(rootCmd, cmdInstall, "-z", "info")
+	assert.Nil(t, err)
+	assert.Equal(t, "info", installCmdOptions.LogLevel)
+}
+
+func TestInstallInfoLogging4(t *testing.T) {
+	installCmdOptions, rootCmd, _ := initializeInstallCmdOptions(t)
+	_, err := test.ExecuteCommand(rootCmd, cmdInstall, "--log-level", "info")
+	assert.Nil(t, err)
+	assert.Equal(t, "info", installCmdOptions.LogLevel)
+}
+
+func TestInstallDebugLogging1(t *testing.T) {
+	installCmdOptions, rootCmd, _ := initializeInstallCmdOptions(t)
+	_, err := test.ExecuteCommand(rootCmd, cmdInstall, "-z", "1")
+	assert.Nil(t, err)
+	assert.Equal(t, "1", installCmdOptions.LogLevel)
+}
+
+func TestInstallDebugLogging2(t *testing.T) {
+	installCmdOptions, rootCmd, _ := initializeInstallCmdOptions(t)
+	_, err := test.ExecuteCommand(rootCmd, cmdInstall, "--log-level", "1")
+	assert.Nil(t, err)
+	assert.Equal(t, "1", installCmdOptions.LogLevel)
+}
+
+func TestInstallDebugLogging3(t *testing.T) {
+	installCmdOptions, rootCmd, _ := initializeInstallCmdOptions(t)
+	_, err := test.ExecuteCommand(rootCmd, cmdInstall, "-z", "debug")
+	assert.Nil(t, err)
+	assert.Equal(t, "debug", installCmdOptions.LogLevel)
+}
+
+func TestInstallDebugLogging4(t *testing.T) {
+	installCmdOptions, rootCmd, _ := initializeInstallCmdOptions(t)
+	_, err := test.ExecuteCommand(rootCmd, cmdInstall, "--log-level", "debug")
+	assert.Nil(t, err)
+	assert.Equal(t, "debug", installCmdOptions.LogLevel)
 }

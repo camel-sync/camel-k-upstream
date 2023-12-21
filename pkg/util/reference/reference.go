@@ -18,14 +18,15 @@ limitations under the License.
 package reference
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"regexp"
 	"strings"
 	"unicode"
 
-	camelv1alpha1 "github.com/apache/camel-k/pkg/apis/camel/v1alpha1"
-	"github.com/pkg/errors"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+
 	corev1 "k8s.io/api/core/v1"
 	eventingv1 "knative.dev/eventing/pkg/apis/eventing/v1"
 	messagingv1 "knative.dev/eventing/pkg/apis/messaging/v1"
@@ -42,19 +43,19 @@ var (
 	queryRegexp      = regexp.MustCompile(`^[^?]*[?](?P<query>.*)$`)
 
 	templates = map[string]corev1.ObjectReference{
-		"kamelet": corev1.ObjectReference{
+		"kamelet": {
 			Kind:       "Kamelet",
-			APIVersion: camelv1alpha1.SchemeGroupVersion.String(),
+			APIVersion: v1.SchemeGroupVersion.String(),
 		},
-		"channel": corev1.ObjectReference{
+		"channel": {
 			Kind:       "Channel",
 			APIVersion: messagingv1.SchemeGroupVersion.String(),
 		},
-		"broker": corev1.ObjectReference{
+		"broker": {
 			Kind:       "Broker",
 			APIVersion: eventingv1.SchemeGroupVersion.String(),
 		},
-		"ksvc": corev1.ObjectReference{
+		"ksvc": {
 			Kind:       "Service",
 			APIVersion: servingv1.SchemeGroupVersion.String(),
 		},
@@ -92,8 +93,7 @@ func (c *Converter) PropertiesFromString(str string) (map[string]string, error) 
 		for _, match := range queryRegexp.FindAllStringSubmatch(str, -1) {
 			for idx, text := range match {
 				groupName := groupNames[idx]
-				switch groupName {
-				case "query":
+				if groupName == "query" {
 					query = text
 				}
 			}
@@ -106,11 +106,11 @@ func (c *Converter) PropertiesFromString(str string) (map[string]string, error) 
 			}
 			k, errkey := url.QueryUnescape(kv[0])
 			if errkey != nil {
-				return nil, errors.Wrapf(errkey, "cannot unescape key %q", kv[0])
+				return nil, fmt.Errorf("cannot unescape key %q: %w", kv[0], errkey)
 			}
 			v, errval := url.QueryUnescape(kv[1])
 			if errval != nil {
-				return nil, errors.Wrapf(errval, "cannot unescape value %q", kv[1])
+				return nil, fmt.Errorf("cannot unescape value %q: %w", kv[1], errval)
 			}
 			res[k] = v
 		}

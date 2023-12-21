@@ -18,34 +18,32 @@ limitations under the License.
 package trait
 
 import (
-	"github.com/scylladb/go-set/strset"
-
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
-	"github.com/apache/camel-k/pkg/metadata"
-	"github.com/apache/camel-k/pkg/util"
-	"github.com/apache/camel-k/pkg/util/kubernetes"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+	traitv1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1/trait"
+	"github.com/apache/camel-k/v2/pkg/metadata"
+	"github.com/apache/camel-k/v2/pkg/util"
+	"github.com/apache/camel-k/v2/pkg/util/camel"
+	"github.com/apache/camel-k/v2/pkg/util/kubernetes"
+	"github.com/apache/camel-k/v2/pkg/util/sets"
 )
 
-// The Dependencies trait is internally used to automatically add runtime dependencies based on the
-// integration that the user wants to run.
-//
-// +camel-k:trait=dependencies
 type dependenciesTrait struct {
-	BaseTrait `property:",squash"`
+	BasePlatformTrait
+	traitv1.DependenciesTrait `property:",squash"`
 }
 
 func newDependenciesTrait() Trait {
 	return &dependenciesTrait{
-		BaseTrait: NewBaseTrait("dependencies", 500),
+		BasePlatformTrait: NewBasePlatformTrait("dependencies", 500),
 	}
 }
 
-func (t *dependenciesTrait) Configure(e *Environment) (bool, error) {
-	if IsFalse(t.Enabled) {
-		return false, nil
+func (t *dependenciesTrait) Configure(e *Environment) (bool, *TraitCondition, error) {
+	if e.Integration == nil {
+		return false, nil, nil
 	}
 
-	return e.IntegrationInPhase(v1.IntegrationPhaseInitialization), nil
+	return e.IntegrationInPhase(v1.IntegrationPhaseInitialization), nil, nil
 }
 
 func (t *dependenciesTrait) Apply(e *Environment) error {
@@ -53,9 +51,12 @@ func (t *dependenciesTrait) Apply(e *Environment) error {
 		e.Integration.Status.Dependencies = make([]string, 0)
 	}
 
-	dependencies := strset.New()
+	dependencies := sets.NewSet()
 
 	if e.Integration.Spec.Dependencies != nil {
+		if err := camel.ValidateDependenciesE(e.CamelCatalog, e.Integration.Spec.Dependencies); err != nil {
+			return err
+		}
 		dependencies.Add(e.Integration.Spec.Dependencies...)
 	}
 
@@ -64,15 +65,22 @@ func (t *dependenciesTrait) Apply(e *Environment) error {
 		dependencies.Add(d.GetDependencyID())
 	}
 
-	sources, err := kubernetes.ResolveIntegrationSources(e.C, e.Client, e.Integration, e.Resources)
+	sources, err := kubernetes.ResolveIntegrationSources(e.Ctx, e.Client, e.Integration, e.Resources)
 	if err != nil {
 		return err
 	}
 	for _, s := range sources {
 		// Add source-related dependencies
-		dependencies.Merge(AddSourceDependencies(s, e.CamelCatalog))
+		srcDeps, err := ExtractSourceDependencies(s, e.CamelCatalog)
+		if err != nil {
+			return err
+		}
+		dependencies.Merge(srcDeps)
 
-		meta := metadata.Extract(e.CamelCatalog, s)
+		meta, err := metadata.Extract(e.CamelCatalog, s)
+		if err != nil {
+			return err
+		}
 		meta.RequiredCapabilities.Each(func(item string) bool {
 			util.StringSliceUniqueAdd(&e.Integration.Status.Capabilities, item)
 			return true
@@ -86,9 +94,4 @@ func (t *dependenciesTrait) Apply(e *Environment) error {
 	})
 
 	return nil
-}
-
-// IsPlatformTrait overrides base class method
-func (t *dependenciesTrait) IsPlatformTrait() bool {
-	return true
 }

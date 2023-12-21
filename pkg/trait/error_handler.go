@@ -23,45 +23,38 @@ import (
 
 	"gopkg.in/yaml.v2"
 
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
-	"github.com/apache/camel-k/pkg/apis/camel/v1alpha1"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+	traitv1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1/trait"
+
+	"github.com/apache/camel-k/v2/pkg/util"
 )
 
-// The error-handler is a platform trait used to inject Error Handler source into the integration runtime.
-//
-// +camel-k:trait=error-handler
 type errorHandlerTrait struct {
-	BaseTrait `property:",squash"`
-	// The error handler ref name provided or found in application properties
-	ErrorHandlerRef string `property:"ref" json:"ref,omitempty"`
+	BasePlatformTrait
+	traitv1.ErrorHandlerTrait `property:",squash"`
 }
 
 func newErrorHandlerTrait() Trait {
 	return &errorHandlerTrait{
 		// NOTE: Must run before dependency trait
-		BaseTrait: NewBaseTrait("error-handler", 470),
+		BasePlatformTrait: NewBasePlatformTrait("error-handler", 470),
 	}
 }
 
-// IsPlatformTrait overrides base class method
-func (t *errorHandlerTrait) IsPlatformTrait() bool {
-	return true
-}
-
-func (t *errorHandlerTrait) Configure(e *Environment) (bool, error) {
-	if IsFalse(t.Enabled) {
-		return false, nil
+func (t *errorHandlerTrait) Configure(e *Environment) (bool, *TraitCondition, error) {
+	if e.Integration == nil {
+		return false, nil, nil
 	}
 
 	if !e.IntegrationInPhase(v1.IntegrationPhaseInitialization) && !e.IntegrationInRunningPhases() {
-		return false, nil
+		return false, nil, nil
 	}
 
 	if t.ErrorHandlerRef == "" {
-		t.ErrorHandlerRef = e.Integration.Spec.GetConfigurationProperty(v1alpha1.ErrorHandlerRefName)
+		t.ErrorHandlerRef = e.Integration.Spec.GetConfigurationProperty(v1.ErrorHandlerRefName)
 	}
 
-	return t.ErrorHandlerRef != "", nil
+	return t.ErrorHandlerRef != "", nil, nil
 }
 
 func (t *errorHandlerTrait) Apply(e *Environment) error {
@@ -69,7 +62,7 @@ func (t *errorHandlerTrait) Apply(e *Environment) error {
 		// If the user configure directly the URI, we need to auto-discover the underlying component
 		// and add the related dependency
 		defaultErrorHandlerURI := e.Integration.Spec.GetConfigurationProperty(
-			fmt.Sprintf("%s.deadLetterUri", v1alpha1.ErrorHandlerAppPropertiesPrefix))
+			fmt.Sprintf("%s.deadLetterUri", v1.ErrorHandlerAppPropertiesPrefix))
 		if defaultErrorHandlerURI != "" && !strings.HasPrefix(defaultErrorHandlerURI, "kamelet:") {
 			t.addErrorHandlerDependencies(e, defaultErrorHandlerURI)
 		}
@@ -82,10 +75,10 @@ func (t *errorHandlerTrait) Apply(e *Environment) error {
 func (t *errorHandlerTrait) addErrorHandlerDependencies(e *Environment, uri string) {
 	candidateComp, scheme := e.CamelCatalog.DecodeComponent(uri)
 	if candidateComp != nil {
-		e.Integration.Spec.AddDependency(candidateComp.GetDependencyID())
+		util.StringSliceUniqueAdd(&e.Integration.Status.Dependencies, candidateComp.GetDependencyID())
 		if scheme != nil {
 			for _, dep := range candidateComp.GetProducerDependencyIDs(scheme.ID) {
-				e.Integration.Spec.AddDependency(dep)
+				util.StringSliceUniqueAdd(&e.Integration.Status.Dependencies, dep)
 			}
 		}
 	}
@@ -94,7 +87,7 @@ func (t *errorHandlerTrait) addErrorHandlerDependencies(e *Environment, uri stri
 func (t *errorHandlerTrait) addErrorHandlerAsSource(e *Environment) error {
 	flowErrorHandler := map[string]interface{}{
 		"error-handler": map[string]string{
-			"ref": t.ErrorHandlerRef,
+			"ref-error-handler": t.ErrorHandlerRef,
 		},
 	}
 	encodedFlowErrorHandler, err := yaml.Marshal([]map[string]interface{}{flowErrorHandler})

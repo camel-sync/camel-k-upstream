@@ -56,20 +56,43 @@ additional parameters that can be set during installation.
 
 > **Tip**: List all releases using `helm list`
 
+## Upgrading the Chart
+
+If you are upgrading the `camel-k` Deployment, you should always use a specific version of the chart and pre-install the CRDS:
+
+```bash
+# Upgrade the CRDs
+$ curl -LO "https://github.com/apache/camel-k/raw/main/docs/charts/camel-k-x.y.z.tgz"
+$ tar xvzf camel-k-x.y.z.tgz
+$ kubectl replace -f camel-k/crds
+# Upgrade the `camel-k` Deployment
+$ helm upgrade camel-k/camel-k --version x.y.z
+```
+
+> **Note**: If you are using a custom ClusterRole instead of the default one `camel-k:edit` from `camel-k/crds/cluster-role.yaml` you should handle it appropriately.
+
+
 ## Uninstalling the Chart
 
 To uninstall/delete the `camel-k` Deployment:
 
 ```bash
-$ helm delete camel-k
+$ helm uninstall camel-k
 ```
 
-The command removes all the Kubernetes resources installed.
+The command removes all of the Kubernetes resources installed, except the CRDs.
+
+To remove them:
+```bash
+$ curl -LO "https://github.com/apache/camel-k/raw/main/docs/charts/camel-k-x.y.z.tgz"
+$ tar xvzf camel-k-x.y.z.tgz
+$ kubectl delete -f camel-k/crds
+```
 
 ## Configuration
 
 The following table lists the most commonly configured parameters of the
-Camel-K chart and their default values. The chart allows configuration of an `IntegrationPlatform` resource, which among others includes build properties and traits configuration. A full list of parameters can be found [in the operator specification][1].
+Camel K chart and their default values. The chart allows configuration of an `IntegrationPlatform` resource, which among others includes build properties and traits configuration. A full list of parameters can be found [in the operator specification][1].
 
 |           Parameter                    |             Description                                                   |            Default             |
 |----------------------------------------|---------------------------------------------------------------------------|--------------------------------|
@@ -79,6 +102,10 @@ Camel-K chart and their default values. The chart allows configuration of an `In
 | `platform.build.registry.insecure`     | Indicates if the registry is not secured                                  | true                           |
 | `platform.cluster`                     | The kind of Kubernetes cluster (Kubernetes or OpenShift)                  | `Kubernetes`                   |
 | `platform.profile`                     | The trait profile to use (Knative, Kubernetes or OpenShift)               | auto                           |
+| `operator.global`                      | Indicates if the operator should watch all namespaces                     | `false`                        |
+| `operator.resources`                   | The resource requests and limits to use for the operator                  |                                |
+| `operator.securityContext`             | The (container-related) securityContext to use for the operator           |                                |
+| `operator.tolerations`                 | The list of tolerations to use for the operator                           |                                |
 
 ## Contributing
 

@@ -21,12 +21,12 @@ import (
 	"errors"
 	"fmt"
 
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+
 	"github.com/spf13/cobra"
 	k8errors "k8s.io/apimachinery/pkg/api/errors"
 
 	k8sclient "sigs.k8s.io/controller-runtime/pkg/client"
-
-	"github.com/apache/camel-k/pkg/apis/camel/v1alpha1"
 )
 
 func newKameletDeleteCmd(rootCmdOptions *RootCmdOptions) (*cobra.Command, *kameletDeleteCommandOptions) {
@@ -35,19 +35,14 @@ func newKameletDeleteCmd(rootCmdOptions *RootCmdOptions) (*cobra.Command, *kamel
 	}
 
 	cmd := cobra.Command{
-		Use:     "delete <name>",
-		Short:   "Delete a Kamelet",
-		Long:    `Delete a Kamelet.`,
+		Use:     "delete [Kamelet1] [Kamelet2] ...",
+		Short:   "Delete Kamelets deployed on Kubernetes",
 		PreRunE: decode(&options),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := options.validate(args); err != nil {
 				return err
 			}
-			if err := options.run(args); err != nil {
-				fmt.Println(err.Error())
-			}
-
-			return nil
+			return options.run(cmd, args)
 		},
 	}
 
@@ -63,16 +58,16 @@ type kameletDeleteCommandOptions struct {
 
 func (command *kameletDeleteCommandOptions) validate(args []string) error {
 	if command.All && len(args) > 0 {
-		return errors.New("invalid combination: both all flag and named kamelets are set")
+		return errors.New("invalid combination: --all flag is set and at least one kamelet name is provided")
 	}
 	if !command.All && len(args) == 0 {
-		return errors.New("invalid combination: neither all flag nor named kamelets are set")
+		return errors.New("invalid combination: provide one or several kamelet names or set --all flag for all kamelets")
 	}
 
 	return nil
 }
 
-func (command *kameletDeleteCommandOptions) run(args []string) error {
+func (command *kameletDeleteCommandOptions) run(cmd *cobra.Command, args []string) error {
 	names := args
 
 	c, err := command.GetCmdClient()
@@ -81,21 +76,21 @@ func (command *kameletDeleteCommandOptions) run(args []string) error {
 	}
 
 	if command.All {
-		klList := v1alpha1.NewKameletList()
+		klList := v1.NewKameletList()
 		if err := c.List(command.Context, &klList, k8sclient.InNamespace(command.Namespace)); err != nil {
 			return err
 		}
 		names = make([]string, 0, len(klList.Items))
 		for _, kl := range klList.Items {
 			// only include non-bundled, non-readonly kamelets
-			if kl.Labels[v1alpha1.KameletBundledLabel] != "true" && kl.Labels[v1alpha1.KameletReadOnlyLabel] != "true" {
+			if kl.Labels[v1.KameletBundledLabel] != "true" && kl.Labels[v1.KameletReadOnlyLabel] != "true" {
 				names = append(names, kl.Name)
 			}
 		}
 	}
 
 	for _, name := range names {
-		if err := command.delete(name); err != nil {
+		if err := command.delete(cmd, name); err != nil {
 			return err
 		}
 	}
@@ -103,13 +98,13 @@ func (command *kameletDeleteCommandOptions) run(args []string) error {
 	return nil
 }
 
-func (command *kameletDeleteCommandOptions) delete(name string) error {
+func (command *kameletDeleteCommandOptions) delete(cmd *cobra.Command, name string) error {
 	c, err := command.GetCmdClient()
 	if err != nil {
 		return err
 	}
 
-	kl := v1alpha1.NewKamelet(command.Namespace, name)
+	kl := v1.NewKamelet(command.Namespace, name)
 	key := k8sclient.ObjectKey{
 		Namespace: command.Namespace,
 		Name:      name,
@@ -118,14 +113,13 @@ func (command *kameletDeleteCommandOptions) delete(name string) error {
 	if err != nil {
 		if k8errors.IsNotFound(err) {
 			return fmt.Errorf("no kamelet found with name \"%s\"", name)
-		} else {
-			return err
 		}
+		return err
 	}
 
 	// check that it is not a bundled nor read-only one which is supposed to belong to platform
 	// thus not managed by the end user
-	if kl.Labels[v1alpha1.KameletBundledLabel] == "true" || kl.Labels[v1alpha1.KameletReadOnlyLabel] == "true" {
+	if kl.Labels[v1.KameletBundledLabel] == "true" || kl.Labels[v1.KameletReadOnlyLabel] == "true" {
 		// skip platform Kamelets while deleting all Kamelets
 		if command.All {
 			return nil
@@ -137,10 +131,9 @@ func (command *kameletDeleteCommandOptions) delete(name string) error {
 	if err != nil {
 		if k8errors.IsNotFound(err) {
 			return fmt.Errorf("no kamelet found with name \"%s\"", name)
-		} else {
-			return fmt.Errorf("error deleting kamelet \"%s\", %s", name, err)
 		}
+		return fmt.Errorf("error deleting kamelet \"%s\": %w", name, err)
 	}
-	fmt.Printf("kamelet \"%s\" has been deleted\n", name)
+	fmt.Fprintln(cmd.OutOrStdout(), `kamelet "`+name+`" has been deleted`)
 	return nil
 }

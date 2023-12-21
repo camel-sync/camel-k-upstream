@@ -1,3 +1,4 @@
+//go:build integration
 // +build integration
 
 // To enable compilation of this file in Goland, go to "Settings -> Go -> Vendoring & Build Tags -> Custom Tags" and add "integration"
@@ -22,39 +23,73 @@ limitations under the License.
 package knative
 
 import (
+	"fmt"
 	"testing"
 
 	. "github.com/onsi/gomega"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 
 	messaging "knative.dev/eventing/pkg/apis/messaging/v1"
 
-	. "github.com/apache/camel-k/e2e/support"
-	camelv1 "github.com/apache/camel-k/pkg/apis/camel/v1"
+	. "github.com/apache/camel-k/v2/e2e/support"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
 )
 
-// Test that kamelet binding can be changed and changes propagated to integrations
+// Test that a Pipe can be changed and the changes are propagated to the Integration
 func TestKameletChange(t *testing.T) {
-	WithNewTestNamespace(t, func(ns string) {
-		Expect(Kamel("install", "-n", ns).Execute()).To(Succeed())
-		Expect(CreateTimerKamelet(ns, "timer-source")()).To(Succeed())
-		Expect(CreateKnativeChannel(ns, "messages")()).To(Succeed())
-		Expect(Kamel("run", "-n", ns, "files/display.groovy", "-w").Execute()).To(Succeed())
-		ref := v1.ObjectReference{
-			Kind:       "InMemoryChannel",
-			Name:       "messages",
-			APIVersion: messaging.SchemeGroupVersion.String(),
-		}
-		Expect(BindKameletTo(ns, "timer-binding", "timer-source", ref, map[string]string{"message": "message is Hello"})()).To(Succeed())
-		Eventually(IntegrationPodPhase(ns, "timer-binding"), TestTimeoutMedium).Should(Equal(v1.PodRunning))
-		Eventually(IntegrationCondition(ns, "timer-binding", camelv1.IntegrationConditionReady), TestTimeoutShort).Should(Equal(v1.ConditionTrue))
-		Eventually(IntegrationLogs(ns, "display"), TestTimeoutShort).Should(ContainSubstring("message is Hello"))
+	RegisterTestingT(t)
+	timerPipe := "timer-binding"
 
-		Expect(BindKameletTo(ns, "timer-binding", "timer-source", ref, map[string]string{"message": "message is Hi"})()).To(Succeed())
-		Eventually(IntegrationPodPhase(ns, "timer-binding"), TestTimeoutMedium).Should(Equal(v1.PodRunning))
-		Eventually(IntegrationCondition(ns, "timer-binding", camelv1.IntegrationConditionReady), TestTimeoutShort).Should(Equal(v1.ConditionTrue))
-		Eventually(IntegrationLogs(ns, "display"), TestTimeoutShort).Should(ContainSubstring("message is Hi"))
-		Expect(Kamel("delete", "--all", "-n", ns).Execute()).To(Succeed())
-	})
+	knChannel := "test-kamelet-messages"
+	knChannelConf := fmt.Sprintf("%s:InMemoryChannel:%s", messaging.SchemeGroupVersion.String(), knChannel)
+	timerSource := "my-timer-source"
+	Expect(CreateTimerKamelet(ns, timerSource)()).To(Succeed())
+	Expect(CreateKnativeChannel(ns, knChannel)()).To(Succeed())
+	// Consumer route that will read from the KNative channel
+	Expect(KamelRunWithID(operatorID, ns, "files/test-kamelet-display.groovy", "-w").Execute()).To(Succeed())
+	Eventually(IntegrationPodPhase(ns, "test-kamelet-display")).Should(Equal(corev1.PodRunning))
+
+	// Create the Pipe
+	Expect(KamelBindWithID(operatorID, ns,
+		timerSource,
+		knChannelConf,
+		"-p", "source.message=HelloKNative!",
+		"--annotation", "trait.camel.apache.org/health.enabled=true",
+		"--annotation", "trait.camel.apache.org/health.readiness-initial-delay=10",
+		"--name", timerPipe,
+	).Execute()).To(Succeed())
+	Eventually(IntegrationPodPhase(ns, timerPipe)).Should(Equal(corev1.PodRunning))
+	Eventually(IntegrationConditionStatus(ns, timerPipe, v1.IntegrationConditionReady), TestTimeoutShort).Should(Equal(corev1.ConditionTrue))
+	// Consume the message
+	Eventually(IntegrationLogs(ns, "test-kamelet-display"), TestTimeoutShort).Should(ContainSubstring("HelloKNative!"))
+
+	Eventually(PipeCondition(ns, timerPipe, v1.PipeConditionReady), TestTimeoutMedium).Should(And(
+		WithTransform(PipeConditionStatusExtract, Equal(corev1.ConditionTrue)),
+		WithTransform(PipeConditionReason, Equal(v1.IntegrationConditionDeploymentReadyReason)),
+		WithTransform(PipeConditionMessage, Equal(fmt.Sprintf("1/1 ready replicas"))),
+	))
+
+	// Update the Pipe
+	Expect(KamelBindWithID(operatorID, ns,
+		timerSource,
+		knChannelConf,
+		"-p", "source.message=message is Hi",
+		"--annotation", "trait.camel.apache.org/health.enabled=true",
+		"--annotation", "trait.camel.apache.org/health.readiness-initial-delay=10",
+		"--name", timerPipe,
+	).Execute()).To(Succeed())
+
+	Eventually(IntegrationPodPhase(ns, timerPipe), TestTimeoutLong).Should(Equal(corev1.PodRunning))
+	Eventually(IntegrationConditionStatus(ns, timerPipe, v1.IntegrationConditionReady), TestTimeoutShort).Should(Equal(corev1.ConditionTrue))
+	Eventually(IntegrationLogs(ns, "test-kamelet-display"), TestTimeoutShort).Should(ContainSubstring("message is Hi"))
+
+	Eventually(PipeCondition(ns, timerPipe, v1.PipeConditionReady), TestTimeoutMedium).
+		Should(And(
+			WithTransform(PipeConditionStatusExtract, Equal(corev1.ConditionTrue)),
+			WithTransform(PipeConditionReason, Equal(v1.IntegrationConditionDeploymentReadyReason)),
+			WithTransform(PipeConditionMessage, Equal("1/1 ready replicas")),
+		))
+
+	Expect(Kamel("delete", "--all", "-n", ns).Execute()).To(Succeed())
 }

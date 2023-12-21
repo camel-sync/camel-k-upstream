@@ -14,6 +14,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+
 package base
 
 import (
@@ -21,9 +22,7 @@ import (
 	"path/filepath"
 )
 
-var (
-	GoModDirectory string
-)
+var GoModDirectory string
 
 func FileExists(name string) bool {
 	stat, err := os.Stat(name)
@@ -32,11 +31,11 @@ func FileExists(name string) bool {
 			return false
 		}
 	}
+
 	return !stat.IsDir()
 }
 
 func init() {
-
 	// Save the original directory the process started in.
 	wd, err := os.Getwd()
 	if err != nil {
@@ -53,6 +52,7 @@ func init() {
 		current = next
 		if FileExists(filepath.Join(current, "go.mod")) && FileExists(filepath.Join(current, "go.sum")) {
 			GoModDirectory = current
+
 			break
 		}
 	}

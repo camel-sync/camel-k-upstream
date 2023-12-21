@@ -1,3 +1,4 @@
+//go:build integration
 // +build integration
 
 // To enable compilation of this file in Goland, go to "Settings -> Go -> Vendoring & Build Tags -> Custom Tags" and add "integration"
@@ -31,27 +32,33 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	. "github.com/apache/camel-k/e2e/support"
-	"github.com/apache/camel-k/pkg/apis/camel/v1"
-	"github.com/apache/camel-k/pkg/util/dsl"
-	"github.com/apache/camel-k/pkg/util/knative"
+	. "github.com/apache/camel-k/v2/e2e/support"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+	"github.com/apache/camel-k/v2/pkg/util/dsl"
+	"github.com/apache/camel-k/v2/pkg/util/knative"
 )
 
-func TestKnativePlatform(t *testing.T) {
-	WithNewTestNamespace(t, func(ns string) {
-		if !knative.IsEnabledInNamespace(TestContext, TestClient(), ns) {
-			t.Error("Knative not installed in the cluster")
-			t.FailNow()
-		}
+func TestKnativePlatformDetection(t *testing.T) {
+	RegisterTestingT(t)
 
-		Expect(Kamel("install", "-n", ns).Execute()).To(Succeed())
+	installed, err := knative.IsInstalled(TestClient())
+	Expect(err).NotTo(HaveOccurred())
+	if !installed {
+		t.Error("Knative not installed in the cluster")
+		t.FailNow()
+	}
+
+	WithNewTestNamespace(t, func(ns string) {
+		operatorID := "camel-k-knative"
+		// Install withouth profile (should automatically detect the presence of KNative)
+		Expect(KamelInstallWithID(operatorID, ns).Execute()).To(Succeed())
 		Eventually(PlatformPhase(ns), TestTimeoutMedium).Should(Equal(v1.IntegrationPlatformPhaseReady))
 		Eventually(PlatformProfile(ns), TestTimeoutShort).Should(Equal(v1.TraitProfile("")))
 		cluster := Platform(ns)().Status.Cluster
 
 		t.Run("run yaml on cluster profile", func(t *testing.T) {
-			Expect(Kamel("run", "-n", ns, "files/yaml.yaml", "--profile", string(cluster)).Execute()).To(Succeed())
-			Eventually(IntegrationPodPhase(ns, "yaml"), TestTimeoutMedium).Should(Equal(corev1.PodRunning))
+			Expect(KamelRunWithID(operatorID, ns, "files/yaml.yaml", "--profile", string(cluster)).Execute()).To(Succeed())
+			Eventually(IntegrationPodPhase(ns, "yaml"), TestTimeoutLong).Should(Equal(corev1.PodRunning))
 			Eventually(IntegrationLogs(ns, "yaml"), TestTimeoutShort).Should(ContainSubstring("Magicstring!"))
 			Eventually(IntegrationProfile(ns, "yaml"), TestTimeoutShort).Should(Equal(v1.TraitProfile(string(cluster))))
 			// Change something in the integration to produce a redeploy
@@ -70,14 +77,14 @@ func TestKnativePlatform(t *testing.T) {
 			Eventually(IntegrationPhase(ns, "yaml")).Should(Equal(v1.IntegrationPhaseRunning))
 			Eventually(IntegrationLogs(ns, "yaml"), TestTimeoutShort).Should(ContainSubstring("Magicstring!!!"))
 			// It should keep the old profile saved in status
-			Eventually(IntegrationProfile(ns, "yaml"), TestTimeoutMedium).Should(Equal(v1.TraitProfile(string(cluster))))
+			Eventually(IntegrationProfile(ns, "yaml"), TestTimeoutMedium).Should(Equal(v1.TraitProfile(cluster)))
 
 			Expect(Kamel("delete", "--all", "-n", ns).Execute()).To(Succeed())
 		})
 
 		t.Run("run yaml on automatic profile", func(t *testing.T) {
-			Expect(Kamel("run", "-n", ns, "files/yaml.yaml").Execute()).To(Succeed())
-			Eventually(IntegrationPodPhase(ns, "yaml"), TestTimeoutMedium).Should(Equal(corev1.PodRunning))
+			Expect(KamelRunWithID(operatorID, ns, "files/yaml.yaml").Execute()).To(Succeed())
+			Eventually(IntegrationPodPhase(ns, "yaml"), TestTimeoutLong).Should(Equal(corev1.PodRunning))
 			Eventually(IntegrationProfile(ns, "yaml"), TestTimeoutShort).Should(Equal(v1.TraitProfileKnative))
 			Expect(Kamel("delete", "--all", "-n", ns).Execute()).To(Succeed())
 		})

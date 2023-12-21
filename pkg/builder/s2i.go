@@ -18,31 +18,36 @@ limitations under the License.
 package builder
 
 import (
+	"archive/tar"
+	"bufio"
+	"compress/gzip"
 	"context"
-	"io/ioutil"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"os"
-	"path"
-	"time"
-
-	"github.com/pkg/errors"
+	"path/filepath"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/util/json"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/runtime/serializer"
+	"k8s.io/client-go/rest"
 
 	ctrl "sigs.k8s.io/controller-runtime/pkg/client"
-	ctrlutil "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 
 	buildv1 "github.com/openshift/api/build/v1"
 	imagev1 "github.com/openshift/api/image/v1"
 
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
-	"github.com/apache/camel-k/pkg/client"
-	"github.com/apache/camel-k/pkg/util/kubernetes/customclient"
-	"github.com/apache/camel-k/pkg/util/log"
-	"github.com/apache/camel-k/pkg/util/zip"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+	"github.com/apache/camel-k/v2/pkg/client"
+	"github.com/apache/camel-k/v2/pkg/util"
+	"github.com/apache/camel-k/v2/pkg/util/log"
+	"github.com/apache/camel-k/v2/pkg/util/s2i"
 )
 
 type s2iTask struct {
@@ -84,11 +89,6 @@ func (t *s2iTask) Do(ctx context.Context) v1.BuildStatus {
 		},
 	}
 
-	err := t.c.Delete(ctx, bc)
-	if err != nil && !apierrors.IsNotFound(err) {
-		return status.Failed(errors.Wrap(err, "cannot delete build config"))
-	}
-
 	// Set the build controller as owner reference
 	owner := t.getControllerReference()
 	if owner == nil {
@@ -96,13 +96,9 @@ func (t *s2iTask) Do(ctx context.Context) v1.BuildStatus {
 		owner = t.build
 	}
 
-	if err := ctrlutil.SetOwnerReference(owner, bc, t.c.GetScheme()); err != nil {
-		return status.Failed(errors.Wrapf(err, "cannot set owner reference on BuildConfig: %s", bc.Name))
-	}
-
-	err = t.c.Create(ctx, bc)
+	err := s2i.BuildConfig(ctx, t.c, bc, owner)
 	if err != nil {
-		return status.Failed(errors.Wrap(err, "cannot create build config"))
+		return status.Failed(err)
 	}
 
 	is := &imagev1.ImageStream{
@@ -122,101 +118,107 @@ func (t *s2iTask) Do(ctx context.Context) v1.BuildStatus {
 		},
 	}
 
-	err = t.c.Delete(ctx, is)
-	if err != nil && !apierrors.IsNotFound(err) {
-		return status.Failed(errors.Wrap(err, "cannot delete image stream"))
-	}
-
-	if err := ctrlutil.SetOwnerReference(owner, is, t.c.GetScheme()); err != nil {
-		return status.Failed(errors.Wrapf(err, "cannot set owner reference on ImageStream: %s", is.Name))
-	}
-
-	err = t.c.Create(ctx, is)
-	if err != nil {
-		return status.Failed(errors.Wrap(err, "cannot create image stream"))
-	}
-
-	tmpDir, err := ioutil.TempDir(os.TempDir(), t.build.Name+"-s2i-")
-	if err != nil {
-		return status.Failed(err)
-	}
-	archive := path.Join(tmpDir, "archive.zip")
-	defer os.RemoveAll(tmpDir)
-
-	contextDir := t.task.ContextDir
-	if contextDir == "" {
-		// Use the working directory.
-		// This is useful when the task is executed in-container,
-		// so that its WorkingDir can be used to share state and
-		// coordinate with other tasks.
-		pwd, err := os.Getwd()
-		if err != nil {
-			return status.Failed(err)
-		}
-		contextDir = path.Join(pwd, ContextDir)
-	}
-
-	err = zip.Directory(contextDir, archive)
-	if err != nil {
-		return status.Failed(errors.Wrap(err, "cannot zip context directory"))
-	}
-
-	resource, err := ioutil.ReadFile(archive)
-	if err != nil {
-		return status.Failed(errors.Wrap(err, "cannot fully read zip file "+archive))
-	}
-
-	restClient, err := customclient.GetClientFor(t.c, "build.openshift.io", "v1")
+	err = s2i.ImageStream(ctx, t.c, is, owner)
 	if err != nil {
 		return status.Failed(err)
 	}
 
-	r := restClient.Post().
-		Namespace(t.build.Namespace).
-		Body(resource).
-		Resource("buildconfigs").
-		Name("camel-k-" + t.build.Name).
-		SubResource("instantiatebinary").
-		Do(ctx)
+	err = util.WithTempDir(t.build.Name+"-s2i-", func(tmpDir string) error {
+		archive := filepath.Join(tmpDir, "archive.tar.gz")
 
-	if r.Error() != nil {
-		return status.Failed(errors.Wrap(r.Error(), "cannot instantiate binary"))
-	}
-
-	data, err := r.Raw()
-	if err != nil {
-		return status.Failed(errors.Wrap(err, "no raw data retrieved"))
-	}
-
-	s2iBuild := buildv1.Build{}
-	err = json.Unmarshal(data, &s2iBuild)
-	if err != nil {
-		return status.Failed(errors.Wrap(err, "cannot unmarshal instantiated binary response"))
-	}
-
-	err = t.waitForS2iBuildCompletion(ctx, t.c, &s2iBuild)
-	if err != nil {
-		if err == context.Canceled || err == context.DeadlineExceeded {
-			if err := t.cancelBuild(context.Background(), &s2iBuild); err != nil {
-				log.Errorf(err, "cannot cancel s2i Build: %s/%s", s2iBuild.Namespace, s2iBuild.Name)
+		contextDir := t.task.ContextDir
+		if contextDir == "" {
+			// Use the working directory.
+			// This is useful when the task is executed in-container,
+			// so that its WorkingDir can be used to share state and
+			// coordinate with other tasks.
+			pwd, err := os.Getwd()
+			if err != nil {
+				return err
 			}
+			contextDir = filepath.Join(pwd, ContextDir)
 		}
-		return status.Failed(err)
-	}
-	if s2iBuild.Status.Output.To != nil {
-		status.Digest = s2iBuild.Status.Output.To.ImageDigest
-	}
 
-	err = t.c.Get(ctx, ctrl.ObjectKeyFromObject(is), is)
+		archiveFile, err := os.Create(archive)
+		if err != nil {
+			return fmt.Errorf("cannot create tar archive: %w", err)
+		}
+
+		err = tarDir(contextDir, archiveFile)
+		if err != nil {
+			return fmt.Errorf("cannot tar context directory: %w", err)
+		}
+
+		f, err := util.Open(archive)
+		if err != nil {
+			return err
+		}
+
+		httpCli, err := rest.HTTPClientFor(t.c.GetConfig())
+		if err != nil {
+			return err
+		}
+		restClient, err := apiutil.RESTClientForGVK(
+			schema.GroupVersionKind{Group: "build.openshift.io", Version: "v1"}, false,
+			t.c.GetConfig(), serializer.NewCodecFactory(t.c.GetScheme()), httpCli)
+		if err != nil {
+			return err
+		}
+
+		r := restClient.Post().
+			Namespace(t.build.Namespace).
+			Body(bufio.NewReader(f)).
+			Resource("buildconfigs").
+			Name("camel-k-" + t.build.Name).
+			SubResource("instantiatebinary").
+			Do(ctx)
+
+		if r.Error() != nil {
+			return fmt.Errorf("cannot instantiate binary: %w", r.Error())
+		}
+
+		data, err := r.Raw()
+		if err != nil {
+			return fmt.Errorf("no raw data retrieved: %w", err)
+		}
+
+		s2iBuild := buildv1.Build{}
+		err = json.Unmarshal(data, &s2iBuild)
+		if err != nil {
+			return fmt.Errorf("cannot unmarshal instantiated binary response: %w", err)
+		}
+
+		err = s2i.WaitForS2iBuildCompletion(ctx, t.c, &s2iBuild)
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				// nolint: contextcheck
+				if err := s2i.CancelBuild(context.Background(), t.c, &s2iBuild); err != nil {
+					log.Errorf(err, "cannot cancel s2i Build: %s/%s", s2iBuild.Namespace, s2iBuild.Name)
+				}
+			}
+			return err
+		}
+		if s2iBuild.Status.Output.To != nil {
+			status.Digest = s2iBuild.Status.Output.To.ImageDigest
+		}
+
+		err = t.c.Get(ctx, ctrl.ObjectKeyFromObject(is), is)
+		if err != nil {
+			return err
+		}
+
+		if is.Status.DockerImageRepository == "" {
+			return errors.New("dockerImageRepository not available in ImageStream")
+		}
+
+		status.Image = is.Status.DockerImageRepository + ":" + t.task.Tag
+
+		return f.Close()
+	})
+
 	if err != nil {
 		return status.Failed(err)
 	}
-
-	if is.Status.DockerImageRepository == "" {
-		return status.Failed(errors.New("dockerImageRepository not available in ImageStream"))
-	}
-
-	status.Image = is.Status.DockerImageRepository + ":" + t.task.Tag
 
 	return status
 }
@@ -238,40 +240,52 @@ func (t *s2iTask) getControllerReference() metav1.Object {
 	return owner
 }
 
-func (t *s2iTask) waitForS2iBuildCompletion(ctx context.Context, c client.Client, build *buildv1.Build) error {
-	key := ctrl.ObjectKeyFromObject(build)
-	for {
-		select {
+func tarDir(src string, writers ...io.Writer) error {
+	// ensure the src actually exists before trying to tar it
+	if _, err := os.Stat(src); err != nil {
+		return fmt.Errorf("unable to tar files: %w", err)
+	}
 
-		case <-ctx.Done():
-			return ctx.Err()
+	mw := io.MultiWriter(writers...)
 
-		case <-time.After(1 * time.Second):
-			err := c.Get(ctx, key, build)
-			if err != nil {
-				if apierrors.IsNotFound(err) {
-					continue
-				}
-				return err
-			}
+	gzw := gzip.NewWriter(mw)
+	defer util.CloseQuietly(gzw)
 
-			if build.Status.Phase == buildv1.BuildPhaseComplete {
-				return nil
-			} else if build.Status.Phase == buildv1.BuildPhaseCancelled ||
-				build.Status.Phase == buildv1.BuildPhaseFailed ||
-				build.Status.Phase == buildv1.BuildPhaseError {
-				return errors.New("build failed")
-			}
+	tw := tar.NewWriter(gzw)
+	defer util.CloseQuietly(tw)
+
+	return filepath.Walk(src, func(file string, fi os.FileInfo, err error) error {
+		if err != nil {
+			return err
 		}
-	}
-}
 
-func (t *s2iTask) cancelBuild(ctx context.Context, build *buildv1.Build) error {
-	target := build.DeepCopy()
-	target.Status.Cancelled = true
-	if err := t.c.Patch(ctx, target, ctrl.MergeFrom(build)); err != nil {
-		return err
-	}
-	*build = *target
-	return nil
+		if !fi.Mode().IsRegular() {
+			return nil
+		}
+
+		header, err := tar.FileInfoHeader(fi, fi.Name())
+		if err != nil {
+			return err
+		}
+
+		// update the name to correctly reflect the desired destination when un-taring
+		header.Name = strings.TrimPrefix(strings.ReplaceAll(file, src, ""), string(filepath.Separator))
+
+		if err := tw.WriteHeader(header); err != nil {
+			return err
+		}
+
+		f, err := util.Open(file)
+		if err != nil {
+			return err
+		}
+
+		if _, err := io.Copy(tw, f); err != nil {
+			return err
+		}
+
+		// manually close here after each file operation; deferring would cause each file close
+		// to wait until all operations have completed.
+		return f.Close()
+	})
 }

@@ -20,16 +20,18 @@ package trait
 import (
 	"testing"
 
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
-	"github.com/apache/camel-k/pkg/platform"
-	"github.com/apache/camel-k/pkg/util/kubernetes"
-	"github.com/apache/camel-k/pkg/util/test"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+	"github.com/apache/camel-k/v2/pkg/platform"
+	"github.com/apache/camel-k/v2/pkg/util/kubernetes"
+	"github.com/apache/camel-k/v2/pkg/util/test"
+
 	"github.com/stretchr/testify/assert"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/pointer"
 )
 
 func TestPlatformTraitChangeStatus(t *testing.T) {
-
 	table := []struct {
 		name         string
 		initialPhase v1.IntegrationPhase
@@ -56,16 +58,17 @@ func TestPlatformTraitChangeStatus(t *testing.T) {
 				},
 			}
 
-			trait := newPlatformTrait().(*platformTrait)
-			trait.CreateDefault = BoolP(false)
+			trait, _ := newPlatformTrait().(*platformTrait)
+			trait.CreateDefault = pointer.Bool(false)
 
 			var err error
 			trait.Client, err = test.NewFakeClient()
 			assert.Nil(t, err)
 
-			enabled, err := trait.Configure(&e)
+			enabled, condition, err := trait.Configure(&e)
 			assert.Nil(t, err)
 			assert.True(t, enabled)
+			assert.Nil(t, condition)
 
 			err = trait.Apply(&e)
 			assert.Nil(t, err)
@@ -90,16 +93,17 @@ func TestPlatformTraitCreatesDefaultPlatform(t *testing.T) {
 		},
 	}
 
-	trait := newPlatformTrait().(*platformTrait)
-	trait.CreateDefault = BoolP(true)
+	trait, _ := newPlatformTrait().(*platformTrait)
+	trait.CreateDefault = pointer.Bool(true)
 
 	var err error
 	trait.Client, err = test.NewFakeClient()
 	assert.Nil(t, err)
 
-	enabled, err := trait.Configure(&e)
+	enabled, condition, err := trait.Configure(&e)
 	assert.Nil(t, err)
 	assert.True(t, enabled)
+	assert.Nil(t, condition)
 
 	err = trait.Apply(&e)
 	assert.Nil(t, err)
@@ -107,12 +111,11 @@ func TestPlatformTraitCreatesDefaultPlatform(t *testing.T) {
 	assert.Equal(t, v1.IntegrationPhaseWaitingForPlatform, e.Integration.Status.Phase)
 	assert.Equal(t, 1, len(e.Resources.Items()))
 	defPlatform := v1.NewIntegrationPlatform("ns1", platform.DefaultPlatformName)
-	defPlatform.Labels = map[string]string{"camel.apache.org/platform.generated": True}
+	defPlatform.Labels = map[string]string{"app": "camel-k", "camel.apache.org/platform.generated": True}
 	assert.Contains(t, e.Resources.Items(), &defPlatform)
 }
 
 func TestPlatformTraitExisting(t *testing.T) {
-
 	table := []struct {
 		name          string
 		platformPhase v1.IntegrationPlatformPhase
@@ -126,7 +129,7 @@ func TestPlatformTraitExisting(t *testing.T) {
 		{
 			name:          "Move state",
 			platformPhase: v1.IntegrationPlatformPhaseReady,
-			expectedPhase: v1.IntegrationPhaseInitialization,
+			expectedPhase: v1.IntegrationPhaseNone,
 		},
 	}
 
@@ -146,8 +149,8 @@ func TestPlatformTraitExisting(t *testing.T) {
 				},
 			}
 
-			trait := newPlatformTrait().(*platformTrait)
-			trait.CreateDefault = BoolP(true)
+			trait, _ := newPlatformTrait().(*platformTrait)
+			trait.CreateDefault = pointer.Bool(true)
 
 			var err error
 			existingPlatform := v1.NewIntegrationPlatform("ns1", "existing")
@@ -155,9 +158,10 @@ func TestPlatformTraitExisting(t *testing.T) {
 			trait.Client, err = test.NewFakeClient(&existingPlatform)
 			assert.Nil(t, err)
 
-			enabled, err := trait.Configure(&e)
+			enabled, condition, err := trait.Configure(&e)
 			assert.Nil(t, err)
 			assert.True(t, enabled)
+			assert.Nil(t, condition)
 
 			err = trait.Apply(&e)
 			assert.Nil(t, err)

@@ -1,3 +1,4 @@
+//go:build integration
 // +build integration
 
 // To enable compilation of this file in Goland, go to "Settings -> Go -> Vendoring & Build Tags -> Custom Tags" and add "integration"
@@ -19,15 +20,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package common
+package cli
 
 import (
 	"context"
 	"testing"
 
-	. "github.com/apache/camel-k/e2e/support"
-	"github.com/apache/camel-k/pkg/cmd"
 	. "github.com/onsi/gomega"
+
+	. "github.com/apache/camel-k/v2/e2e/support"
+	"github.com/apache/camel-k/v2/pkg/cmd"
 )
 
 func TestDuplicateParameters(t *testing.T) {
@@ -37,13 +39,18 @@ func TestDuplicateParameters(t *testing.T) {
 	defer cancel()
 
 	// run kamel to output the traits/configuration structure in json format to check the processed values
-	// the tracing.enabled is false inside JavaDuplicateParams.java, so we can check the output of this trait as true.
-	cmdParams := []string{"kamel", "run", "files/JavaDuplicateParams.java", "-o", "json", "-t", "tracing.enabled=true", "--trait", "pull-secret.enabled=true", "--property", "prop1=true", "-p", "prop2=true"}
+	// the telemetry.enabled is false inside JavaDuplicateParams.java, so we can check the output of this trait as true.
+	cmdParams := []string{"kamel", "run", "files/JavaDuplicateParams.java",
+		"-o", "json",
+		"-t", "telemetry.enabled=true", "--trait", "pull-secret.enabled=true",
+		"--property", "prop1=true", "-p", "prop2=true",
+		"--force"}
 	comm, _, _ := cmd.NewKamelWithModelineCommand(ctx, cmdParams)
 
 	// the command is executed inside GetOutputString function
 	commOutput := GetOutputString(comm)
 
-	outParams := `"traits":{"affinity":{"configuration":{"enabled":true}},"pull-secret":{"configuration":{"enabled":true}},"tracing":{"configuration":{"enabled":true}}},"configuration":[{"type":"property","value":"prop1 = true"},{"type":"property","value":"prop2 = true"},{"type":"property","value":"foo = bar"}]}`
+	outParams :=
+		`"traits":{"affinity":{"enabled":true},"camel":{"properties":["prop1 = true","prop2 = true","foo = bar"]},"pull-secret":{"enabled":true},"addons":{"telemetry":{"enabled":true}}}`
 	Expect(commOutput).To(ContainSubstring(outParams))
 }

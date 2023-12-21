@@ -20,19 +20,22 @@ package builder
 import (
 	"bufio"
 	"context"
-	"io/ioutil"
+	"io"
 	"os"
-	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
+
+	"go.uber.org/multierr"
 
 	spectrum "github.com/container-tools/spectrum/pkg/builder"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
-	"github.com/apache/camel-k/pkg/client"
-	"github.com/apache/camel-k/pkg/util/log"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+	"github.com/apache/camel-k/v2/pkg/client"
+	"github.com/apache/camel-k/v2/pkg/util"
+	"github.com/apache/camel-k/v2/pkg/util/log"
 )
 
 type spectrumTask struct {
@@ -49,8 +52,13 @@ func (t *spectrumTask) Do(ctx context.Context) v1.BuildStatus {
 	baseImage := t.build.Status.BaseImage
 	if baseImage == "" {
 		baseImage = t.task.BaseImage
-		status.BaseImage = baseImage
 	}
+	status.BaseImage = baseImage
+	rootImage := t.build.Status.RootImage
+	if rootImage == "" {
+		rootImage = t.task.BaseImage
+	}
+	status.RootImage = rootImage
 
 	contextDir := t.task.ContextDir
 	if contextDir == "" {
@@ -62,19 +70,25 @@ func (t *spectrumTask) Do(ctx context.Context) v1.BuildStatus {
 		if err != nil {
 			return status.Failed(err)
 		}
-		contextDir = path.Join(pwd, ContextDir)
+		contextDir = filepath.Join(pwd, ContextDir)
 	}
 
-	libraryPath := path.Join(contextDir, DependenciesDir)
-	_, err := os.Stat(libraryPath)
-	if err != nil && os.IsNotExist(err) {
-		// this can only indicate that there are no more libraries to add to the base image,
-		// because transitive resolution is the same even if spec differs
+	log.Infof("Running spectrum task in context directory: %s", contextDir)
+
+	exists, err := util.DirectoryExists(contextDir)
+	if err != nil {
+		return status.Failed(err)
+	}
+	empty, err := util.DirectoryEmpty(contextDir)
+	if err != nil {
+		return status.Failed(err)
+	}
+	if !exists || empty {
+		// this can only indicate that there are no more resources to add to the base image,
+		// because transitive resolution is the same even if spec differs.
 		log.Infof("No new image to build, reusing existing image %s", baseImage)
 		status.Image = baseImage
 		return status
-	} else if err != nil {
-		return status.Failed(err)
 	}
 
 	pullInsecure := t.task.Registry.Insecure // incremental build case
@@ -91,15 +105,14 @@ func (t *spectrumTask) Do(ctx context.Context) v1.BuildStatus {
 
 	registryConfigDir := ""
 	if t.task.Registry.Secret != "" {
-		registryConfigDir, err = mountSecret(ctx, t.c, t.build.Namespace, t.task.Registry.Secret)
+		registryConfigDir, err = MountSecret(ctx, t.c, t.build.Namespace, t.task.Registry.Secret)
 		if err != nil {
 			return status.Failed(err)
 		}
-		defer os.RemoveAll(registryConfigDir)
 	}
 
 	newStdR, newStdW, pipeErr := os.Pipe()
-	defer newStdW.Close()
+	defer util.CloseQuietly(newStdW)
 
 	if pipeErr != nil {
 		// In the unlikely case of an error, use stdout instead of aborting
@@ -119,20 +132,30 @@ func (t *spectrumTask) Do(ctx context.Context) v1.BuildStatus {
 		Recursive:     true,
 	}
 
-	go readSpectrumLogs(newStdR)
-	digest, err := spectrum.Build(options, libraryPath+":"+path.Join(DeploymentDir, DependenciesDir))
+	if jobs := runtime.GOMAXPROCS(0); jobs > 1 {
+		options.Jobs = jobs
+	}
 
+	go readSpectrumLogs(newStdR)
+	digest, err := spectrum.Build(options, contextDir+":"+filepath.Join(DeploymentDir)) //nolint
 	if err != nil {
+		_ = os.RemoveAll(registryConfigDir)
 		return status.Failed(err)
 	}
 
 	status.Image = t.task.Image
 	status.Digest = digest
 
+	if registryConfigDir != "" {
+		if err := os.RemoveAll(registryConfigDir); err != nil {
+			return status.Failed(err)
+		}
+	}
+
 	return status
 }
 
-func readSpectrumLogs(newStdOut *os.File) {
+func readSpectrumLogs(newStdOut io.Reader) {
 	scanner := bufio.NewScanner(newStdOut)
 
 	for scanner.Scan() {
@@ -141,21 +164,25 @@ func readSpectrumLogs(newStdOut *os.File) {
 	}
 }
 
-func mountSecret(ctx context.Context, c client.Client, namespace, name string) (string, error) {
-	dir, err := ioutil.TempDir("", "spectrum-secret-")
+func MountSecret(ctx context.Context, c client.Client, namespace, name string) (string, error) {
+	dir, err := os.MkdirTemp("", "spectrum-secret-")
 	if err != nil {
 		return "", err
 	}
 
 	secret, err := c.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
-		os.RemoveAll(dir)
+		if removeErr := os.RemoveAll(dir); removeErr != nil {
+			err = multierr.Append(err, removeErr)
+		}
 		return "", err
 	}
 
 	for file, content := range secret.Data {
-		if err := ioutil.WriteFile(filepath.Join(dir, remap(file)), content, 0600); err != nil {
-			os.RemoveAll(dir)
+		if err := os.WriteFile(filepath.Join(dir, remap(file)), content, 0o600); err != nil {
+			if removeErr := os.RemoveAll(dir); removeErr != nil {
+				err = multierr.Append(err, removeErr)
+			}
 			return "", err
 		}
 	}

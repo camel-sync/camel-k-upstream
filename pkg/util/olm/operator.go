@@ -22,44 +22,47 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/pkg/errors"
-
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/kubectl/pkg/cmd/set/env"
+
+	k8sclient "k8s.io/client-go/kubernetes"
 
 	runtime "sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/operator-framework/api/pkg/operators"
 	operatorsv1 "github.com/operator-framework/api/pkg/operators/v1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 
-	"github.com/apache/camel-k/pkg/client"
-	"github.com/apache/camel-k/pkg/util/kubernetes"
+	"github.com/apache/camel-k/v2/pkg/client"
+	"github.com/apache/camel-k/v2/pkg/util/kubernetes"
+	"github.com/apache/camel-k/v2/pkg/util/openshift"
 )
 
 // The following properties can be overridden at build time via ldflags
 
-// DefaultOperatorName is the Camel K operator name in OLM
-var DefaultOperatorName = "camel-k-operator"
+// DefaultOperatorName is the Camel K operator name in OLM.
+var DefaultOperatorName = "camel-k"
 
-// DefaultPackage is the Camel K package in OLM
+// DefaultPackage is the Camel K package in OLM.
 var DefaultPackage = "camel-k"
 
-// DefaultChannel is the distribution channel in Operator Hub
+// DefaultChannel is the distribution channel in Operator Hub.
 var DefaultChannel = "stable"
 
-// DefaultSource is the name of the operator source where the operator is published
+// DefaultSource is the name of the operator source where the operator is published.
 var DefaultSource = "community-operators"
 
-// DefaultSourceNamespace is the namespace of the operator source
+// DefaultSourceNamespace is the namespace of the operator source.
 var DefaultSourceNamespace = "openshift-marketplace"
 
-// DefaultStartingCSV contains the specific version to install
+// DefaultStartingCSV contains the specific version to install.
 var DefaultStartingCSV = ""
 
 // DefaultGlobalNamespace indicates a namespace containing an OperatorGroup that enables the operator to watch all namespaces.
 // It will be used in global installation mode.
 var DefaultGlobalNamespace = "openshift-operators"
 
-// Options contains information about an operator in OLM
+// Options contains information about an operator in OLM.
 type Options struct {
 	OperatorName    string
 	Package         string
@@ -70,9 +73,12 @@ type Options struct {
 	GlobalNamespace string
 }
 
-// IsOperatorInstalled tells if a OLM CSV or a Subscription is already installed in the namespace
+// IsOperatorInstalled tells if a OLM CSV or a Subscription is already installed in the namespace.
 func IsOperatorInstalled(ctx context.Context, client client.Client, namespace string, global bool, options Options) (bool, error) {
-	options = fillDefaults(options)
+	options, err := fillDefaults(options, client)
+	if err != nil {
+		return false, err
+	}
 	// CSV is present in current namespace for both local and global installation modes
 	if csv, err := findCSV(ctx, client, namespace, options); err != nil {
 		return false, err
@@ -89,7 +95,7 @@ func IsOperatorInstalled(ctx context.Context, client client.Client, namespace st
 	return false, nil
 }
 
-// HasPermissionToInstall checks if the current user/serviceaccount has the right permissions to install camel k via OLM
+// HasPermissionToInstall checks if the current user/serviceaccount has the right permissions to install camel k via OLM.
 func HasPermissionToInstall(ctx context.Context, client client.Client, namespace string, global bool, options Options) (bool, error) {
 	if ok, err := kubernetes.CheckPermission(ctx, client, operatorsv1alpha1.GroupName, "clusterserviceversions", namespace, options.Package, "list"); err != nil {
 		return false, err
@@ -115,7 +121,7 @@ func HasPermissionToInstall(ctx context.Context, client client.Client, namespace
 	}
 
 	if !global {
-		if ok, err := kubernetes.CheckPermission(ctx, client, operatorsv1.GroupName, "operatorgroups", namespace, options.Package, "list"); err != nil {
+		if ok, err := kubernetes.CheckPermission(ctx, client, operators.GroupName, "operatorgroups", namespace, options.Package, "list"); err != nil {
 			return false, err
 		} else if !ok {
 			return false, nil
@@ -126,7 +132,7 @@ func HasPermissionToInstall(ctx context.Context, client client.Client, namespace
 			return false, err
 		}
 		if group == nil {
-			if ok, err := kubernetes.CheckPermission(ctx, client, operatorsv1.GroupName, "operatorgroups", namespace, options.Package, "create"); err != nil {
+			if ok, err := kubernetes.CheckPermission(ctx, client, operators.GroupName, "operatorgroups", namespace, options.Package, "create"); err != nil {
 				return false, err
 			} else if !ok {
 				return false, nil
@@ -137,10 +143,13 @@ func HasPermissionToInstall(ctx context.Context, client client.Client, namespace
 	return true, nil
 }
 
-// Install creates a subscription for the OLM package
+// Install creates a subscription for the OLM package.
 func Install(ctx context.Context, client client.Client, namespace string, global bool, options Options, collection *kubernetes.Collection,
-	tolerations []string, nodeSelectors []string, resourcesRequirements []string) (bool, error) {
-	options = fillDefaults(options)
+	tolerations []string, nodeSelectors []string, resourcesRequirements []string, envVars []string) (bool, error) {
+	options, err := fillDefaults(options, client)
+	if err != nil {
+		return false, err
+	}
 	if installed, err := IsOperatorInstalled(ctx, client, namespace, global, options); err != nil {
 		return false, err
 	} else if installed {
@@ -165,20 +174,25 @@ func Install(ctx context.Context, client client.Client, namespace string, global
 			Channel:                options.Channel,
 			StartingCSV:            options.StartingCSV,
 			InstallPlanApproval:    operatorsv1alpha1.ApprovalAutomatic,
+			Config:                 &operatorsv1alpha1.SubscriptionConfig{},
 		},
 	}
 	// Additional configuration
-	err := maybeSetTolerations(&sub, tolerations)
+	err = maybeSetTolerations(&sub, tolerations)
 	if err != nil {
-		return false, errors.Wrap(err, fmt.Sprintf("could not set tolerations"))
+		return false, fmt.Errorf("could not set tolerations: %w", err)
 	}
 	err = maybeSetNodeSelectors(&sub, nodeSelectors)
 	if err != nil {
-		return false, errors.Wrap(err, fmt.Sprintf("could not set node selectors"))
+		return false, fmt.Errorf("could not set node selectors: %w", err)
 	}
 	err = maybeSetResourcesRequirements(&sub, resourcesRequirements)
 	if err != nil {
-		return false, errors.Wrap(err, fmt.Sprintf("could not set resources requirements"))
+		return false, fmt.Errorf("could not set resources requirements: %w", err)
+	}
+	err = maybeSetEnvVars(&sub, envVars)
+	if err != nil {
+		return false, fmt.Errorf("could not set environment variables: %w", err)
 	}
 
 	if collection != nil {
@@ -205,9 +219,10 @@ func Install(ctx context.Context, client client.Client, namespace string, global
 			if collection != nil {
 				collection.Add(group)
 			} else if err := client.Create(ctx, group); err != nil {
-				return false, errors.Wrap(err, fmt.Sprintf("namespace %s has no operator group defined and "+
+				return false, fmt.Errorf("namespace %s has no operator group defined and "+
 					"current user is not able to create it. "+
-					"Make sure you have the right roles to install operators from OLM", namespace))
+					"Make sure you have the right roles to install operators from OLM"+": %w", namespace, err)
+
 			}
 		}
 	}
@@ -219,6 +234,15 @@ func maybeSetTolerations(sub *operatorsv1alpha1.Subscription, tolArray []string)
 		tolerations, err := kubernetes.NewTolerations(tolArray)
 		if err != nil {
 			return err
+		}
+		if sub == nil {
+			panic("sub is nil")
+		}
+		if sub.Spec == nil {
+			panic("sub.Spec is nil")
+		}
+		if sub.Spec.Config == nil {
+			panic("sub.Spec.Config is nil")
 		}
 		sub.Spec.Config.Tolerations = tolerations
 	}
@@ -242,13 +266,28 @@ func maybeSetResourcesRequirements(sub *operatorsv1alpha1.Subscription, reqArray
 		if err != nil {
 			return err
 		}
-		sub.Spec.Config.Resources = resourcesReq
+		sub.Spec.Config.Resources = &resourcesReq
 	}
 	return nil
 }
 
-// Uninstall removes CSV and subscription from the namespace
+func maybeSetEnvVars(sub *operatorsv1alpha1.Subscription, envVars []string) error {
+	if envVars != nil {
+		vars, _, _, err := env.ParseEnv(envVars, nil)
+		if err != nil {
+			return err
+		}
+		sub.Spec.Config.Env = vars
+	}
+	return nil
+}
+
+// Uninstall removes CSV and subscription from the namespace.
 func Uninstall(ctx context.Context, client client.Client, namespace string, global bool, options Options) error {
+	options, err := fillDefaults(options, client)
+	if err != nil {
+		return err
+	}
 	sub, err := findSubscription(ctx, client, namespace, global, options)
 	if err != nil {
 		return err
@@ -317,7 +356,7 @@ func findOperatorGroup(ctx context.Context, client client.Client, namespace stri
 	return nil, nil
 }
 
-func fillDefaults(o Options) Options {
+func fillDefaults(o Options, client k8sclient.Interface) (Options, error) {
 	if o.OperatorName == "" {
 		o.OperatorName = DefaultOperatorName
 	}
@@ -327,17 +366,35 @@ func fillDefaults(o Options) Options {
 	if o.Channel == "" {
 		o.Channel = DefaultChannel
 	}
-	if o.Source == "" {
-		o.Source = DefaultSource
-	}
-	if o.SourceNamespace == "" {
-		o.SourceNamespace = DefaultSourceNamespace
-	}
 	if o.StartingCSV == "" {
 		o.StartingCSV = DefaultStartingCSV
 	}
-	if o.GlobalNamespace == "" {
-		o.GlobalNamespace = DefaultGlobalNamespace
+	isOCP, err := openshift.IsOpenShift(client)
+	if err != nil {
+		return o, err
 	}
-	return o
+	if isOCP {
+		if o.Source == "" {
+			o.Source = DefaultSource
+		}
+		if o.SourceNamespace == "" {
+			o.SourceNamespace = DefaultSourceNamespace
+		}
+		if o.GlobalNamespace == "" {
+			o.GlobalNamespace = DefaultGlobalNamespace
+		}
+	} else {
+		// Use a different set of defaults value
+		if o.Source == "" {
+			o.Source = "operatorhubio-catalog"
+		}
+		if o.SourceNamespace == "" {
+			o.SourceNamespace = "olm"
+		}
+		if o.GlobalNamespace == "" {
+			o.GlobalNamespace = "operators"
+		}
+	}
+
+	return o, nil
 }

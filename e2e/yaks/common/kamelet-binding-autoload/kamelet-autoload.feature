@@ -3,7 +3,7 @@ Feature: Camel K can load default secrets for Kamelets
   Background:
     Given Disable auto removal of Kamelet resources
     Given Disable auto removal of Kubernetes resources
-    Given Camel-K resource polling configuration
+    Given Camel K resource polling configuration
       | maxAttempts          | 40   |
       | delayBetweenAttempts | 3000 |
 
@@ -18,4 +18,7 @@ Feature: Camel K can load default secrets for Kamelets
     And HTTP server timeout is 600000 ms
     Then expect HTTP request body: default
     And receive POST /default
-    And delete KameletBinding binding
+
+ Scenario: Remove resources
+    Given delete Kubernetes service stub-service
+    Given delete KameletBinding binding

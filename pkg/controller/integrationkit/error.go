@@ -20,11 +20,11 @@ package integrationkit
 import (
 	"context"
 
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
-	"github.com/apache/camel-k/pkg/util/digest"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+	"github.com/apache/camel-k/v2/pkg/util/digest"
 )
 
-// NewErrorAction creates a new error handling action for the kit
+// NewErrorAction creates a new error handling action for the kit.
 func NewErrorAction() Action {
 	return &errorAction{}
 }

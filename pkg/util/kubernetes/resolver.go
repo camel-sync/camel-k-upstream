@@ -21,14 +21,14 @@ import (
 	"context"
 	"fmt"
 
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
-	"github.com/apache/camel-k/pkg/util/gzip"
-	"github.com/pkg/errors"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+	"github.com/apache/camel-k/v2/pkg/util/gzip"
+
 	corev1 "k8s.io/api/core/v1"
 	controller "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// ResolveSources --
+// ResolveSources --.
 func ResolveSources(elements []v1.SourceSpec, mapLookup func(string) (*corev1.ConfigMap, error)) ([]v1.SourceSpec, error) {
 	for i := 0; i < len(elements); i++ {
 		r := &elements[i]
@@ -41,25 +41,12 @@ func ResolveSources(elements []v1.SourceSpec, mapLookup func(string) (*corev1.Co
 	return elements, nil
 }
 
-// ResolveResource --
-func ResolveResource(elements []v1.ResourceSpec, mapLookup func(string) (*corev1.ConfigMap, error)) ([]v1.ResourceSpec, error) {
-	for i := 0; i < len(elements); i++ {
-		r := &elements[i]
-
-		if err := Resolve(&r.DataSpec, mapLookup); err != nil {
-			return nil, err
-		}
-	}
-
-	return elements, nil
-}
-
-// Resolve --
+// Resolve --.
 func Resolve(data *v1.DataSpec, mapLookup func(string) (*corev1.ConfigMap, error)) error {
 	// if it is a reference, get the content from the
 	// referenced ConfigMap
 	if data.ContentRef != "" {
-		//look up the ConfigMap from the kubernetes cluster
+		// look up the ConfigMap from the kubernetes cluster
 		cm, err := mapLookup(data.ContentRef)
 		if err != nil {
 			return err
@@ -85,7 +72,7 @@ func Resolve(data *v1.DataSpec, mapLookup func(string) (*corev1.ConfigMap, error
 		var uncompressed []byte
 		var err error
 		if uncompressed, err = gzip.UncompressBase64(cnt); err != nil {
-			return errors.Wrap(err, "error while uncompressing data")
+			return fmt.Errorf("error while uncompressing data: %w", err)
 		}
 		data.Compression = false
 		data.Content = string(uncompressed)
@@ -94,7 +81,7 @@ func Resolve(data *v1.DataSpec, mapLookup func(string) (*corev1.ConfigMap, error
 	return nil
 }
 
-// ResolveIntegrationSources --
+// ResolveIntegrationSources --.
 func ResolveIntegrationSources(
 	context context.Context,
 	client controller.Reader,
@@ -105,34 +92,7 @@ func ResolveIntegrationSources(
 		return nil, nil
 	}
 
-	return ResolveSources(integration.Sources(), func(name string) (*corev1.ConfigMap, error) {
-		// the config map could be part of the resources created
-		// by traits
-		cm := resources.GetConfigMap(func(m *corev1.ConfigMap) bool {
-			return m.Name == name
-		})
-
-		if cm != nil {
-			return cm, nil
-		}
-
-		return GetConfigMap(context, client, name, integration.Namespace)
-	})
-}
-
-// ResolveIntegrationResources --
-// nolint: lll
-func ResolveIntegrationResources(
-	context context.Context,
-	client controller.Reader,
-	integration *v1.Integration,
-	resources *Collection) ([]v1.ResourceSpec, error) {
-
-	if integration == nil {
-		return nil, nil
-	}
-
-	return ResolveResource(integration.Spec.Resources, func(name string) (*corev1.ConfigMap, error) {
+	return ResolveSources(integration.AllSources(), func(name string) (*corev1.ConfigMap, error) {
 		// the config map could be part of the resources created
 		// by traits
 		cm := resources.GetConfigMap(func(m *corev1.ConfigMap) bool {

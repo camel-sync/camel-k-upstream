@@ -26,14 +26,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sclient "sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/apache/camel-k/pkg/client"
+	"github.com/apache/camel-k/v2/pkg/client"
 )
 
 const (
 	registryNamespace = "kube-system"
 )
 
-// FindRegistry returns the Minikube addon registry location if any
+// FindRegistry returns the Minikube addon registry location if any.
 func FindRegistry(ctx context.Context, c client.Client) (*string, error) {
 	svcs := corev1.ServiceList{
 		TypeMeta: metav1.TypeMeta{

@@ -18,11 +18,13 @@ limitations under the License.
 package main
 
 import (
-	"github.com/apache/camel-k/cmd/util/doc-gen/generators"
+	"github.com/apache/camel-k/v2/cmd/util/doc-gen/generators"
 	"github.com/spf13/pflag"
 	"k8s.io/gengo/args"
+	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	_ "github.com/apache/camel-k/addons"
+	_ "github.com/apache/camel-k/v2/addons"
 )
 
 func main() {
@@ -31,11 +33,13 @@ func main() {
 	// Custom args.
 	customArgs := &generators.CustomArgs{}
 	pflag.CommandLine.StringVar(&customArgs.DocDir, "doc-dir", "./docs", "Root of the document directory.")
-	pflag.CommandLine.StringVar(&customArgs.DeployDir, "deploy-dir", "./deploy", "Root of the deploy directory.")
+	pflag.CommandLine.StringVar(&customArgs.ResourceDir, "resource-dir", "./resources", "Root of the resource directory.")
 	pflag.CommandLine.StringVar(&customArgs.TraitPath, "traits-path", "modules/traits/pages", "Path to the traits directory.")
-	pflag.CommandLine.StringVar(&customArgs.NavPath, "nav-path", "modules/ROOT/nav.adoc", "Path to the navigation file.")
+	pflag.CommandLine.StringVar(&customArgs.NavPath, "nav-path", "modules/ROOT/nav-end.adoc", "Path to the navigation file.")
 	pflag.CommandLine.StringVar(&customArgs.ListPath, "list-path", "modules/traits/pages/traits.adoc", "Path to the trait list file.")
 	arguments.CustomArgs = customArgs
+
+	log.SetLogger(zap.New(zap.UseDevMode(true)))
 
 	if err := arguments.Execute(
 		generators.NameSystems(),
@@ -44,5 +48,4 @@ func main() {
 	); err != nil {
 		panic(err)
 	}
-
 }

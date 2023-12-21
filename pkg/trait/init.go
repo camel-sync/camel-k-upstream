@@ -18,33 +18,36 @@ limitations under the License.
 package trait
 
 import (
+	"errors"
 	"sort"
 
-	"github.com/pkg/errors"
+	"k8s.io/utils/pointer"
 
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
-	"github.com/apache/camel-k/pkg/util"
-	"github.com/apache/camel-k/pkg/util/dsl"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+	traitv1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1/trait"
+	"github.com/apache/camel-k/v2/pkg/util"
+	"github.com/apache/camel-k/v2/pkg/util/dsl"
 )
 
 const flowsInternalSourceName = "camel-k-embedded-flow.yaml"
 
 type initTrait struct {
-	BaseTrait `property:",squash"`
+	BaseTrait
+	traitv1.Trait `property:",squash"`
 }
 
-func newInitTrait() Trait {
+func NewInitTrait() Trait {
 	return &initTrait{
 		BaseTrait: NewBaseTrait("init", 1),
 	}
 }
 
-func (t *initTrait) Configure(e *Environment) (bool, error) {
-	if IsFalse(t.Enabled) {
-		return false, errors.New("trait init cannot be disabled")
+func (t *initTrait) Configure(e *Environment) (bool, *TraitCondition, error) {
+	if !pointer.BoolDeref(t.Enabled, true) {
+		return false, nil, errors.New("trait init cannot be disabled")
 	}
 
-	return e.IntegrationInPhase(v1.IntegrationPhaseInitialization), nil
+	return e.IntegrationInPhase(v1.IntegrationPhaseInitialization), nil, nil
 }
 
 func (t *initTrait) Apply(e *Environment) error {

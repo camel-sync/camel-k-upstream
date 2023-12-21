@@ -23,9 +23,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/apache/camel-k/pkg/client"
-	"github.com/apache/camel-k/pkg/trait"
-	"github.com/apache/camel-k/pkg/util/log"
+	"github.com/apache/camel-k/v2/pkg/client"
+	"github.com/apache/camel-k/v2/pkg/trait"
+	"github.com/apache/camel-k/v2/pkg/util/log"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -67,7 +67,7 @@ func (loc *JaegerTracingLocator) FindEndpoint(ctx context.Context, c client.Clie
 	return "", nil
 }
 
-// registering the locator
+// registering the locator.
 func init() {
 	TracingLocators = append(TracingLocators, &JaegerTracingLocator{}, &JaegerTracingLocator{allowHeadless: true})
 }

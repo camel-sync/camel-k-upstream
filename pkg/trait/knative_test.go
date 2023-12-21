@@ -18,13 +18,13 @@ limitations under the License.
 package trait
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/pointer"
 
 	eventingduckv1 "knative.dev/eventing/pkg/apis/duck/v1"
 	eventing "knative.dev/eventing/pkg/apis/eventing/v1"
@@ -33,20 +33,21 @@ import (
 	duckv1 "knative.dev/pkg/apis/duck/v1"
 	serving "knative.dev/serving/pkg/apis/serving/v1"
 
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
-	knativeapi "github.com/apache/camel-k/pkg/apis/camel/v1/knative"
-	"github.com/apache/camel-k/pkg/client"
-	"github.com/apache/camel-k/pkg/util/camel"
-	"github.com/apache/camel-k/pkg/util/envvar"
-	k8sutils "github.com/apache/camel-k/pkg/util/kubernetes"
-	"github.com/apache/camel-k/pkg/util/test"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+	knativeapi "github.com/apache/camel-k/v2/pkg/apis/camel/v1/knative"
+	traitv1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1/trait"
+	"github.com/apache/camel-k/v2/pkg/client"
+	"github.com/apache/camel-k/v2/pkg/util/camel"
+	"github.com/apache/camel-k/v2/pkg/util/envvar"
+	k8sutils "github.com/apache/camel-k/v2/pkg/util/kubernetes"
+	"github.com/apache/camel-k/v2/pkg/util/test"
 )
 
 func TestKnativeEnvConfigurationFromTrait(t *testing.T) {
 	catalog, err := camel.DefaultCatalog()
 	assert.Nil(t, err)
 
-	traitCatalog := NewCatalog(context.TODO(), nil)
+	traitCatalog := NewCatalog(nil)
 
 	environment := Environment{
 		CamelCatalog: catalog,
@@ -60,20 +61,21 @@ func TestKnativeEnvConfigurationFromTrait(t *testing.T) {
 				Phase: v1.IntegrationPhaseDeploying,
 			},
 			Spec: v1.IntegrationSpec{
-				Profile:   v1.TraitProfileKnative,
-				Sources:   []v1.SourceSpec{},
-				Resources: []v1.ResourceSpec{},
-				Traits: map[string]v1.TraitSpec{
-					"knative": test.TraitSpecFromMap(t, map[string]interface{}{
-						"enabled":         true,
-						"auto":            false,
-						"channelSources":  []string{"channel-source-1"},
-						"channelSinks":    []string{"channel-sink-1"},
-						"endpointSources": []string{"endpoint-source-1"},
-						"endpointSinks":   []string{"endpoint-sink-1", "endpoint-sink-2"},
-						"eventSources":    []string{"knative:event"},
-						"eventSinks":      []string{"knative:event"},
-					}),
+				Profile: v1.TraitProfileKnative,
+				Sources: []v1.SourceSpec{},
+				Traits: v1.Traits{
+					Knative: &traitv1.KnativeTrait{
+						Trait: traitv1.Trait{
+							Enabled: pointer.Bool(true),
+						},
+						Auto:            pointer.Bool(false),
+						ChannelSources:  []string{"channel-source-1"},
+						ChannelSinks:    []string{"channel-sink-1"},
+						EndpointSources: []string{"endpoint-source-1"},
+						EndpointSinks:   []string{"endpoint-sink-1", "endpoint-sink-2"},
+						EventSources:    []string{"knative:event"},
+						EventSinks:      []string{"knative:event"},
+					},
 				},
 			},
 		},
@@ -101,15 +103,16 @@ func TestKnativeEnvConfigurationFromTrait(t *testing.T) {
 	c, err := NewFakeClient("ns")
 	assert.Nil(t, err)
 
-	tc := NewCatalog(context.TODO(), c)
+	tc := NewCatalog(c)
 
-	err = tc.configure(&environment)
+	err = tc.Configure(&environment)
 	assert.Nil(t, err)
 
-	tr := tc.GetTrait("knative").(*knativeTrait)
-	ok, err := tr.Configure(&environment)
+	tr, _ := tc.GetTrait("knative").(*knativeTrait)
+	ok, condition, err := tr.Configure(&environment)
 	assert.Nil(t, err)
 	assert.True(t, ok)
+	assert.Nil(t, condition)
 
 	err = tr.Apply(&environment)
 	assert.Nil(t, err)
@@ -151,7 +154,7 @@ func TestKnativeEnvConfigurationFromSource(t *testing.T) {
 	catalog, err := camel.DefaultCatalog()
 	assert.Nil(t, err)
 
-	traitCatalog := NewCatalog(context.TODO(), nil)
+	traitCatalog := NewCatalog(nil)
 
 	environment := Environment{
 		CamelCatalog: catalog,
@@ -188,11 +191,12 @@ func TestKnativeEnvConfigurationFromSource(t *testing.T) {
 						Language: v1.LanguageJavaSource,
 					},
 				},
-				Resources: []v1.ResourceSpec{},
-				Traits: map[string]v1.TraitSpec{
-					"knative": test.TraitSpecFromMap(t, map[string]interface{}{
-						"enabled": true,
-					}),
+				Traits: v1.Traits{
+					Knative: &traitv1.KnativeTrait{
+						Trait: traitv1.Trait{
+							Enabled: pointer.Bool(true),
+						},
+					},
 				},
 			},
 		},
@@ -220,16 +224,17 @@ func TestKnativeEnvConfigurationFromSource(t *testing.T) {
 	c, err := NewFakeClient("ns")
 	assert.Nil(t, err)
 
-	tc := NewCatalog(context.TODO(), c)
+	tc := NewCatalog(c)
 
-	err = tc.configure(&environment)
+	err = tc.Configure(&environment)
 	assert.Nil(t, err)
 
-	tr := tc.GetTrait("knative").(*knativeTrait)
+	tr, _ := tc.GetTrait("knative").(*knativeTrait)
 
-	ok, err := tr.Configure(&environment)
+	ok, condition, err := tr.Configure(&environment)
 	assert.Nil(t, err)
 	assert.True(t, ok)
+	assert.Nil(t, condition)
 
 	err = tr.Apply(&environment)
 	assert.Nil(t, err)
@@ -288,14 +293,13 @@ func TestKnativePlatformHttpConfig(t *testing.T) {
 			c, err := NewFakeClient("ns")
 			assert.Nil(t, err)
 
-			tc := NewCatalog(context.TODO(), c)
+			tc := NewCatalog(c)
 
-			err = tc.configure(&environment)
+			err = tc.Configure(&environment)
 			assert.Nil(t, err)
 
-			err = tc.apply(&environment)
+			_, err = tc.apply(&environment)
 			assert.Nil(t, err)
-
 			assert.Contains(t, environment.Integration.Status.Capabilities, v1.CapabilityPlatformHTTP)
 		})
 	}
@@ -335,29 +339,87 @@ func TestKnativePlatformHttpDependencies(t *testing.T) {
 			c, err := NewFakeClient("ns")
 			assert.Nil(t, err)
 
-			tc := NewCatalog(context.TODO(), c)
+			tc := NewCatalog(c)
 
-			err = tc.configure(&environment)
+			err = tc.Configure(&environment)
 			assert.Nil(t, err)
 
-			err = tc.apply(&environment)
+			conditions, err := tc.apply(&environment)
 			assert.Nil(t, err)
-
+			assert.Empty(t, conditions)
 			assert.Contains(t, environment.Integration.Status.Capabilities, v1.CapabilityPlatformHTTP)
 			assert.Contains(t, environment.Integration.Status.Dependencies, "mvn:org.apache.camel.quarkus:camel-quarkus-platform-http")
 		})
 	}
 }
 
+func TestKnativeConfigurationSorting(t *testing.T) {
+	// unsorted on purpose
+	sources := []v1.SourceSpec{
+		{
+			DataSpec: v1.DataSpec{
+				Name:    "s1.groovy",
+				Content: `from('knative:channel/channel-source-2').log('${body}')`,
+			},
+			Language: v1.LanguageGroovy,
+		},
+		{
+			DataSpec: v1.DataSpec{
+				Name:    "s2.groovy",
+				Content: `from('knative:channel/channel-source-4').log('${body}')`,
+			},
+			Language: v1.LanguageGroovy,
+		},
+		{
+			DataSpec: v1.DataSpec{
+				Name:    "s3.groovy",
+				Content: `from('knative:channel/channel-source-1').log('${body}')`,
+			},
+			Language: v1.LanguageGroovy,
+		},
+		{
+			DataSpec: v1.DataSpec{
+				Name:    "s4.groovy",
+				Content: `from('knative:channel/channel-source-3').log('${body}')`,
+			},
+			Language: v1.LanguageGroovy,
+		},
+	}
+
+	environment := NewFakeEnvironment(t, v1.SourceSpec{})
+	environment.Integration.Status.Phase = v1.IntegrationPhaseRunning
+	environment.Integration.Spec.Sources = sources
+
+	c, err := SortChannelFakeClient("ns")
+	assert.Nil(t, err)
+	tc := NewCatalog(c)
+	err = tc.Configure(&environment)
+	assert.Nil(t, err)
+	conditions, _ := tc.apply(&environment)
+	assert.Empty(t, conditions)
+	// no matter if there is any other trait error
+	camelEnv := knativeapi.NewCamelEnvironment()
+	err = camelEnv.Deserialize(envvar.Get(environment.EnvVars, "CAMEL_KNATIVE_CONFIGURATION").Value)
+	assert.Nil(t, err)
+	assert.Equal(t, "channel-source-1", camelEnv.Services[0].Name)
+	assert.Equal(t, "channel-source-2", camelEnv.Services[1].Name)
+	assert.Equal(t, "channel-source-3", camelEnv.Services[2].Name)
+	assert.Equal(t, "channel-source-4", camelEnv.Services[3].Name)
+}
+
 func NewFakeEnvironment(t *testing.T, source v1.SourceSpec) Environment {
+	t.Helper()
+
+	client, _ := NewFakeClient("ns")
 	catalog, err := camel.DefaultCatalog()
 	assert.Nil(t, err)
 
-	traitCatalog := NewCatalog(context.TODO(), nil)
+	traitCatalog := NewCatalog(nil)
 
 	environment := Environment{
 		CamelCatalog: catalog,
 		Catalog:      traitCatalog,
+		Client:       client,
 		Integration: &v1.Integration{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test",
@@ -371,11 +433,12 @@ func NewFakeEnvironment(t *testing.T, source v1.SourceSpec) Environment {
 				Sources: []v1.SourceSpec{
 					source,
 				},
-				Resources: []v1.ResourceSpec{},
-				Traits: map[string]v1.TraitSpec{
-					"knative": test.TraitSpecFromMap(t, map[string]interface{}{
-						"enabled": true,
-					}),
+				Traits: v1.Traits{
+					Knative: &traitv1.KnativeTrait{
+						Trait: traitv1.Trait{
+							Enabled: pointer.Bool(true),
+						},
+					},
 				},
 			},
 		},
@@ -390,8 +453,12 @@ func NewFakeEnvironment(t *testing.T, source v1.SourceSpec) Environment {
 				Build: v1.IntegrationPlatformBuildSpec{
 					PublishStrategy: v1.IntegrationPlatformBuildPublishStrategyS2I,
 					Registry:        v1.RegistrySpec{Address: "registry"},
+					RuntimeVersion:  catalog.Runtime.Version,
 				},
 				Profile: v1.TraitProfileKnative,
+			},
+			Status: v1.IntegrationPlatformStatus{
+				Phase: v1.IntegrationPlatformPhaseReady,
 			},
 		},
 		EnvVars:        make([]corev1.EnvVar, 0),
@@ -509,8 +576,10 @@ func NewFakeClient(namespace string) (client.Client, error) {
 			},
 			Spec: eventing.BrokerSpec{},
 			Status: eventing.BrokerStatus{
-				Address: duckv1.Addressable{
-					URL: brokerURL,
+				AddressStatus: duckv1.AddressStatus{
+					Address: &duckv1.Addressable{
+						URL: brokerURL,
+					},
 				},
 			},
 		},
@@ -535,6 +604,105 @@ func NewFakeClient(namespace string) (client.Client, error) {
 						APIVersion: serving.SchemeGroupVersion.String(),
 						Kind:       "Service",
 						Name:       "event-source-1",
+					},
+				},
+			},
+		},
+	)
+}
+
+func SortChannelFakeClient(namespace string) (client.Client, error) {
+	channelSourceURL1, err := apis.ParseURL("http://channel-source-1.host/")
+	if err != nil {
+		return nil, err
+	}
+	channelSourceURL2, err := apis.ParseURL("http://channel-source-2.host/")
+	if err != nil {
+		return nil, err
+	}
+	channelSourceURL3, err := apis.ParseURL("http://channel-source-3.host/")
+	if err != nil {
+		return nil, err
+	}
+	channelSourceURL4, err := apis.ParseURL("http://channel-source-4.host/")
+	if err != nil {
+		return nil, err
+	}
+
+	return test.NewFakeClient(
+		// Channels unsorted on purpose
+		&messaging.Channel{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "Channel",
+				APIVersion: messaging.SchemeGroupVersion.String(),
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: namespace,
+				Name:      "channel-source-2",
+			},
+			Status: messaging.ChannelStatus{
+				ChannelableStatus: eventingduckv1.ChannelableStatus{
+					AddressStatus: duckv1.AddressStatus{
+						Address: &duckv1.Addressable{
+							URL: channelSourceURL2,
+						},
+					},
+				},
+			},
+		},
+		&messaging.Channel{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "Channel",
+				APIVersion: messaging.SchemeGroupVersion.String(),
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: namespace,
+				Name:      "channel-source-4",
+			},
+			Status: messaging.ChannelStatus{
+				ChannelableStatus: eventingduckv1.ChannelableStatus{
+					AddressStatus: duckv1.AddressStatus{
+						Address: &duckv1.Addressable{
+							URL: channelSourceURL4,
+						},
+					},
+				},
+			},
+		},
+		&messaging.Channel{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "Channel",
+				APIVersion: messaging.SchemeGroupVersion.String(),
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: namespace,
+				Name:      "channel-source-1",
+			},
+			Status: messaging.ChannelStatus{
+				ChannelableStatus: eventingduckv1.ChannelableStatus{
+					AddressStatus: duckv1.AddressStatus{
+						Address: &duckv1.Addressable{
+							URL: channelSourceURL1,
+						},
+					},
+				},
+			},
+		},
+		&messaging.Channel{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "Channel",
+				APIVersion: messaging.SchemeGroupVersion.String(),
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: namespace,
+				Name:      "channel-source-3",
+			},
+			Status: messaging.ChannelStatus{
+				ChannelableStatus: eventingduckv1.ChannelableStatus{
+					AddressStatus: duckv1.AddressStatus{
+						Address: &duckv1.Addressable{
+							URL: channelSourceURL3,
+						},
 					},
 				},
 			},

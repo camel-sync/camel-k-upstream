@@ -21,13 +21,13 @@ import (
 	"context"
 	"testing"
 
-	"github.com/apache/camel-k/pkg/platform"
+	"github.com/apache/camel-k/v2/pkg/platform"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
-	"github.com/apache/camel-k/pkg/util/log"
-	"github.com/apache/camel-k/pkg/util/test"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+	"github.com/apache/camel-k/v2/pkg/util/log"
+	"github.com/apache/camel-k/v2/pkg/util/test"
 	"github.com/rs/xid"
 	"github.com/stretchr/testify/assert"
 )
@@ -58,7 +58,7 @@ func TestWarm_Succeeded(t *testing.T) {
 
 	assert.Nil(t, platform.ConfigureDefaults(context.TODO(), c, &ip, false))
 
-	h := NewWarmAction()
+	h := NewWarmAction(c)
 	h.InjectLogger(log.Log)
 	h.InjectClient(c)
 
@@ -93,7 +93,7 @@ func TestWarm_Failing(t *testing.T) {
 
 	assert.Nil(t, platform.ConfigureDefaults(context.TODO(), c, &ip, false))
 
-	h := NewWarmAction()
+	h := NewWarmAction(c)
 	h.InjectLogger(log.Log)
 	h.InjectClient(c)
 
@@ -128,7 +128,7 @@ func TestWarm_WarmingUp(t *testing.T) {
 
 	assert.Nil(t, platform.ConfigureDefaults(context.TODO(), c, &ip, false))
 
-	h := NewWarmAction()
+	h := NewWarmAction(c)
 	h.InjectLogger(log.Log)
 	h.InjectClient(c)
 

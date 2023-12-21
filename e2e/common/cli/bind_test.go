@@ -1,3 +1,4 @@
+//go:build integration
 // +build integration
 
 // To enable compilation of this file in Goland, go to "Settings -> Go -> Vendoring & Build Tags -> Custom Tags" and add "integration"
@@ -19,35 +20,46 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package common
+package cli
 
 import (
-	v1 "k8s.io/api/core/v1"
 	"testing"
+
+	corev1 "k8s.io/api/core/v1"
 
 	. "github.com/onsi/gomega"
 
-	. "github.com/apache/camel-k/e2e/support"
+	. "github.com/apache/camel-k/v2/e2e/support"
 )
 
 func TestKamelCLIBind(t *testing.T) {
-	WithNewTestNamespace(t, func(ns string) {
-		Expect(Kamel("install", "-n", ns).Execute()).To(Succeed())
-		Expect(CreateTimerKamelet(ns, "test-timer-source")()).To(Succeed())
+	RegisterTestingT(t)
 
-		t.Run("bind timer to log", func(t *testing.T) {
-			Expect(Kamel("bind", "test-timer-source", "log:info", "-p", "source.message=helloTest", "-n", ns).Execute()).To(Succeed())
-			Eventually(IntegrationPodPhase(ns, "test-timer-source-to-log"), TestTimeoutLong).Should(Equal(v1.PodRunning))
+	kameletName := "test-timer-source"
+	Expect(CreateTimerKamelet(ns, kameletName)()).To(Succeed())
 
-			Eventually(IntegrationLogs(ns, "test-timer-source-to-log")).Should(ContainSubstring("Body: helloTest"))
-			Expect(Kamel("bind", "test-timer-source", "log:info", "-p", "source.message=newText", "-n", ns).Execute()).To(Succeed())
-			Eventually(IntegrationLogs(ns, "test-timer-source-to-log")).Should(ContainSubstring("Body: newText"))
-
-			Expect(Kamel("delete", "--all", "-n", ns).Execute()).To(Succeed())
-		})
-
-		t.Run("unsuccessful binding, no property", func(t *testing.T) {
-			Expect(Kamel("bind", "timer-source", "log:info", "-n", ns).Execute()).NotTo(Succeed())
-		})
+	t.Run("bind timer to log", func(t *testing.T) {
+		Expect(KamelBindWithID(operatorID, ns, kameletName, "log:info", "-p", "source.message=helloTest").Execute()).To(Succeed())
+		Eventually(IntegrationPodPhase(ns, "test-timer-source-to-log"), TestTimeoutLong).Should(Equal(corev1.PodRunning))
+		Eventually(IntegrationLogs(ns, "test-timer-source-to-log")).Should(ContainSubstring("Body: helloTest"))
+		Expect(KamelBindWithID(operatorID, ns, "test-timer-source", "log:info", "-p", "source.message=newText").Execute()).To(Succeed())
+		Eventually(IntegrationLogs(ns, "test-timer-source-to-log")).Should(ContainSubstring("Body: newText"))
 	})
+
+	t.Run("unsuccessful binding, no property", func(t *testing.T) {
+		Expect(KamelBindWithID(operatorID, ns, "timer-source", "log:info").Execute()).NotTo(Succeed())
+	})
+
+	t.Run("bind uris", func(t *testing.T) {
+		Expect(KamelBindWithID(operatorID, ns, "timer:foo", "log:bar").Execute()).To(Succeed())
+		Eventually(IntegrationPodPhase(ns, "timer-to-log"), TestTimeoutLong).Should(Equal(corev1.PodRunning))
+		Eventually(IntegrationLogs(ns, "timer-to-log")).Should(ContainSubstring("Body is null"))
+	})
+
+	t.Run("bind with custom SA", func(t *testing.T) {
+		Expect(KamelBindWithID(operatorID, ns, "timer:foo", "log:bar", "--service-account", "my-service-account").Execute()).To(Succeed())
+		Eventually(IntegrationSpecSA(ns, "timer-to-log")).Should(Equal("my-service-account"))
+	})
+
+	Expect(Kamel("delete", "--all", "-n", ns).Execute()).To(Succeed())
 }

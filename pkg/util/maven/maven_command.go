@@ -18,21 +18,20 @@ limitations under the License.
 package maven
 
 import (
-	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"os/exec"
-	"path"
+	"path/filepath"
 	"regexp"
+	"runtime"
+	"strconv"
 	"strings"
 
-	"github.com/pkg/errors"
-
-	"github.com/apache/camel-k/pkg/util"
-	"github.com/apache/camel-k/pkg/util/log"
+	"github.com/apache/camel-k/v2/pkg/util"
+	"github.com/apache/camel-k/v2/pkg/util/log"
 )
 
 var Log = log.WithName("maven")
@@ -47,31 +46,54 @@ func (c *Command) Do(ctx context.Context) error {
 		return err
 	}
 
-	mvnCmd := "mvn"
+	// Prepare maven wrapper helps when running the builder as Pod as it makes
+	// the builder container, Maven agnostic
+	if err := c.prepareMavenWrapper(ctx); err != nil {
+		return err
+	}
+
+	mvnCmd := "./mvnw"
 	if c, ok := os.LookupEnv("MAVEN_CMD"); ok {
 		mvnCmd = c
 	}
 
 	args := make([]string, 0)
-	args = append(args, "--batch-mode")
+	args = append(args, c.context.AdditionalArguments...)
 
-	if c.context.LocalRepository == "" {
-		args = append(args, "-Dcamel.noop=true")
-	} else if _, err := os.Stat(c.context.LocalRepository); err == nil {
-		args = append(args, "-Dmaven.repo.local="+c.context.LocalRepository)
+	if c.context.LocalRepository != "" {
+		if _, err := os.Stat(c.context.LocalRepository); err == nil {
+			args = append(args, "-Dmaven.repo.local="+c.context.LocalRepository)
+		}
 	}
 
-	settingsPath := path.Join(c.context.Path, "settings.xml")
-	settingsExists, err := util.FileExists(settingsPath)
-	if err != nil {
+	settingsPath := filepath.Join(c.context.Path, "settings.xml")
+	if settingsExists, err := util.FileExists(settingsPath); err != nil {
 		return err
+	} else if settingsExists {
+		args = append(args, "--global-settings", settingsPath)
 	}
 
-	if settingsExists {
+	settingsPath = filepath.Join(c.context.Path, "user-settings.xml")
+	if settingsExists, err := util.FileExists(settingsPath); err != nil {
+		return err
+	} else if settingsExists {
 		args = append(args, "--settings", settingsPath)
 	}
 
-	args = append(args, c.context.AdditionalArguments...)
+	settingsSecurityPath := filepath.Join(c.context.Path, "settings-security.xml")
+	if settingsSecurityExists, err := util.FileExists(settingsSecurityPath); err != nil {
+		return err
+	} else if settingsSecurityExists {
+		args = append(args, "-Dsettings.security="+settingsSecurityPath)
+	}
+
+	if !util.StringContainsPrefix(c.context.AdditionalArguments, "-Dmaven.artifact.threads") {
+		args = append(args, "-Dmaven.artifact.threads="+strconv.Itoa(runtime.GOMAXPROCS(0)))
+	}
+
+	if !util.StringSliceExists(c.context.AdditionalArguments, "-T") {
+		args = append(args, "-T", strconv.Itoa(runtime.GOMAXPROCS(0)))
+	}
 
 	cmd := exec.CommandContext(ctx, mvnCmd, args...)
 	cmd.Dir = c.context.Path
@@ -96,6 +118,7 @@ func (c *Command) Do(ctx context.Context) error {
 				for _, opt := range options {
 					if strings.HasPrefix(opt, key) {
 						exists = true
+
 						break
 					}
 				}
@@ -119,35 +142,12 @@ func (c *Command) Do(ctx context.Context) error {
 
 	Log.WithValues("MAVEN_OPTS", mavenOptions).Infof("executing: %s", strings.Join(cmd.Args, " "))
 
-	stdOut, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil
-	}
-
-	err = cmd.Start()
-
-	if err != nil {
+	// generate maven file
+	if err := generateMavenContext(c.context.Path, args); err != nil {
 		return err
 	}
 
-	scanner := bufio.NewScanner(stdOut)
-
-	Log.Debug("About to start parsing the Maven output")
-	for scanner.Scan() {
-		line := scanner.Text()
-		mavenLog, parseError := parseLog(line)
-		if parseError == nil {
-			normalizeLog(mavenLog)
-		} else {
-			// Why we are ignoring the parsing errors here: there are a few scenarios where this would likely occur.
-			// For example, if something outside of Maven outputs something (i.e.: the JDK, a misbehaved plugin,
-			// etc). The build may still have succeeded, though.
-			nonNormalizedLog(line)
-		}
-	}
-	Log.Debug("Finished parsing Maven output")
-
-	return cmd.Wait()
+	return util.RunAndLog(ctx, cmd, MavenLogHandler, MavenLogHandler)
 }
 
 func NewContext(buildDir string) Context {
@@ -159,15 +159,14 @@ func NewContext(buildDir string) Context {
 }
 
 type Context struct {
-	Path string
-	// Project             Project
+	Path                string
 	ExtraMavenOpts      []string
-	SettingsContent     []byte
+	GlobalSettings      []byte
+	UserSettings        []byte
+	SettingsSecurity    []byte
 	AdditionalArguments []string
 	AdditionalEntries   map[string]interface{}
-	// Timeout             time.Duration
-	LocalRepository string
-	// Stdout              io.Writer
+	LocalRepository     string
 }
 
 func (c *Context) AddEntry(id string, entry interface{}) {
@@ -199,8 +198,20 @@ func generateProjectStructure(context Context, project Project) error {
 		return err
 	}
 
-	if context.SettingsContent != nil {
-		if err := util.WriteFileWithContent(context.Path, "settings.xml", context.SettingsContent); err != nil {
+	if context.GlobalSettings != nil {
+		if err := util.WriteFileWithContent(filepath.Join(context.Path, "settings.xml"), context.GlobalSettings); err != nil {
+			return err
+		}
+	}
+
+	if context.UserSettings != nil {
+		if err := util.WriteFileWithContent(filepath.Join(context.Path, "user-settings.xml"), context.UserSettings); err != nil {
+			return err
+		}
+	}
+
+	if context.SettingsSecurity != nil {
+		if err := util.WriteFileWithContent(filepath.Join(context.Path, "settings-security.xml"), context.SettingsSecurity); err != nil {
 			return err
 		}
 	}
@@ -212,7 +223,7 @@ func generateProjectStructure(context Context, project Project) error {
 		if dc, ok := v.([]byte); ok {
 			bytes = dc
 		} else if dc, ok := v.(io.Reader); ok {
-			bytes, err = ioutil.ReadAll(dc)
+			bytes, err = io.ReadAll(dc)
 			if err != nil {
 				return err
 			}
@@ -223,7 +234,7 @@ func generateProjectStructure(context Context, project Project) error {
 		if len(bytes) > 0 {
 			Log.Infof("write entry: %s (%d bytes)", k, len(bytes))
 
-			err = util.WriteFileWithContent(context.Path, k, bytes)
+			err = util.WriteFileWithContent(filepath.Join(context.Path, k), bytes)
 			if err != nil {
 				return err
 			}
@@ -233,12 +244,18 @@ func generateProjectStructure(context Context, project Project) error {
 	return nil
 }
 
+// We expect a maven wrapper under /usr/share/maven/mvnw.
+func (c *Command) prepareMavenWrapper(ctx context.Context) error {
+	cmd := exec.CommandContext(ctx, "cp", "--recursive", "/usr/share/maven/mvnw/.", ".")
+	cmd.Dir = c.context.Path
+	return util.RunAndLog(ctx, cmd, MavenLogHandler, MavenLogHandler)
+}
+
 // ParseGAV decodes the provided Maven GAV into the corresponding Dependency.
 //
 // The artifact id is in the form of:
 //
-//     <groupId>:<artifactId>[:<packagingType>[:<classifier>]]:(<version>|'?')
-//
+//	<groupId>:<artifactId>[:<packagingType>[:<classifier>]]:(<version>|'?')
 func ParseGAV(gav string) (Dependency, error) {
 	// <groupId>:<artifactId>[:<packagingType>[:<classifier>]]:(<version>|'?')
 	dep := Dependency{}
@@ -266,4 +283,17 @@ func ParseGAV(gav string) (Dependency, error) {
 	}
 
 	return dep, nil
+}
+
+// Create a MAVEN_CONTEXT file containing all arguments for a maven command.
+func generateMavenContext(path string, args []string) error {
+	// TODO refactor maven code to avoid creating a file to pass command args
+	commandArgs := make([]string, 0)
+	for _, arg := range args {
+		if arg != "package" && len(strings.TrimSpace(arg)) != 0 {
+			commandArgs = append(commandArgs, strings.TrimSpace(arg))
+		}
+	}
+
+	return util.WriteToFile(filepath.Join(path, "MAVEN_CONTEXT"), strings.Join(commandArgs, " "))
 }

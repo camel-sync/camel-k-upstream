@@ -28,13 +28,28 @@ The following configuration options are available:
 | bool
 | Can be used to enable or disable a trait. All traits share this common property.
 
+| ingress.annotations
+| map[string]string
+| The annotations added to the ingress.
+This can be used to set controller specific annotations, e.g., when using the NGINX Ingress controller:
+See https://github.com/kubernetes/ingress-nginx/blob/main/docs/user-guide/nginx-configuration/annotations.md
+
 | ingress.host
 | string
-| **Required**. To configure the host exposed by the ingress.
+| To configure the host exposed by the ingress.
+
+| ingress.path
+| string
+| To configure the path exposed by the ingress (default `/`).
+
+| ingress.path-type
+| k8s.io/api/networking/v1.PathType
+| To configure the path type exposed by the ingress.
+One of `Exact`, `Prefix`, `ImplementationSpecific` (default to `Prefix`).
 
 | ingress.auto
 | bool
-| To automatically add an ingress whenever the integration uses a HTTP endpoint consumer.
+| To automatically add an ingress whenever the integration uses an HTTP endpoint consumer.
 
 |===
 

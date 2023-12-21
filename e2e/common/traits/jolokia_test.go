@@ -1,3 +1,4 @@
+//go:build integration
 // +build integration
 
 // To enable compilation of this file in Goland, go to "Settings -> Go -> Vendoring & Build Tags -> Custom Tags" and add "integration"
@@ -27,33 +28,33 @@ import (
 
 	. "github.com/onsi/gomega"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 
-	. "github.com/apache/camel-k/e2e/support"
-	camelv1 "github.com/apache/camel-k/pkg/apis/camel/v1"
+	. "github.com/apache/camel-k/v2/e2e/support"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
 )
 
 func TestJolokiaTrait(t *testing.T) {
-	WithNewTestNamespace(t, func(ns string) {
-		Expect(Kamel("install", "-n", ns).Execute()).To(Succeed())
+	RegisterTestingT(t)
 
-		t.Run("Run Java with Jolokia", func(t *testing.T) {
-			Expect(Kamel("run", "-n", ns, "files/Java.java",
-				"-t", "jolokia.enabled=true",
-				"-t", "jolokia.use-ssl-client-authentication=false",
-				"-t", "jolokia.protocol=http",
-				"-t", "jolokia.extended-client-check=false").Execute()).To(Succeed())
-			Eventually(IntegrationPodPhase(ns, "java"), TestTimeoutLong).Should(Equal(v1.PodRunning))
-			Eventually(IntegrationCondition(ns, "java", camelv1.IntegrationConditionReady), TestTimeoutShort).Should(Equal(v1.ConditionTrue))
-			Eventually(IntegrationLogs(ns, "java"), TestTimeoutShort).Should(ContainSubstring("Magicstring!"))
+	t.Run("Run Java with Jolokia", func(t *testing.T) {
+		Expect(KamelRunWithID(operatorID, ns, "files/Java.java",
+			"-t", "jolokia.enabled=true",
+			"-t", "jolokia.use-ssl-client-authentication=false",
+			"-t", "jolokia.protocol=http",
+			"-t", "jolokia.extended-client-check=false").Execute()).To(Succeed())
+		Eventually(IntegrationPodPhase(ns, "java"), TestTimeoutLong).Should(Equal(corev1.PodRunning))
+		Eventually(IntegrationConditionStatus(ns, "java", v1.IntegrationConditionReady), TestTimeoutShort).Should(Equal(corev1.ConditionTrue))
+		Eventually(IntegrationLogs(ns, "java"), TestTimeoutShort).Should(ContainSubstring("Magicstring!"))
 
-			pod := IntegrationPod(ns, "java")
-			response, err := TestClient().CoreV1().RESTClient().Get().
-				AbsPath(fmt.Sprintf("/api/v1/namespaces/%s/pods/%s/proxy/jolokia/", ns, pod().Name)).DoRaw(TestContext)
-			Expect(err).To(BeNil())
-			Expect(response).To(ContainSubstring(`"status":200`))
+		pod := IntegrationPod(ns, "java")
+		response, err := TestClient().CoreV1().RESTClient().Get().
+			AbsPath(fmt.Sprintf("/api/v1/namespaces/%s/pods/%s/proxy/jolokia/", ns, pod().Name)).DoRaw(TestContext)
+		Expect(err).To(BeNil())
+		Expect(response).To(ContainSubstring(`"status":200`))
 
-			Expect(Kamel("delete", "--all", "-n", ns).Execute()).To(Succeed())
-		})
 	})
+
+	Expect(Kamel("delete", "--all", "-n", ns).Execute()).To(Succeed())
+
 }

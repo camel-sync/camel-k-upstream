@@ -22,10 +22,10 @@ import (
 	"fmt"
 	"testing"
 
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
-	"github.com/apache/camel-k/pkg/apis/camel/v1alpha1"
-	"github.com/apache/camel-k/pkg/client/camel/clientset/versioned/fake"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+	"github.com/apache/camel-k/v2/pkg/client/camel/clientset/versioned/fake"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -100,7 +100,7 @@ func TestURIParse(t *testing.T) {
 	}
 	for i, test := range tests {
 		t.Run(fmt.Sprintf("%d-%s", i, test.uri), func(t *testing.T) {
-			catalog, err := newFromURI(test.uri)
+			catalog, err := newFromURI(context.Background(), test.uri)
 			if test.error {
 				assert.Error(t, err)
 			} else {
@@ -130,31 +130,31 @@ func TestNewRepository(t *testing.T) {
 	ctx := context.Background()
 	fakeClient := fake.NewSimpleClientset(createTestContext("none")...)
 	repo, err := New(ctx, fakeClient, "test")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	list, err := repo.List(ctx)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Len(t, list, 2)
 	k1, err := repo.Get(ctx, "kamelet1")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, "kamelet1", k1.Name)
 	k2, err := repo.Get(ctx, "kamelet2")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, "kamelet2", k2.Name)
 }
 
 func TestNewRepositoryWithCamelKamelets(t *testing.T) {
 	ctx := context.Background()
-	fakeClient := fake.NewSimpleClientset(createTestContext("github:apache/camel-kamelets")...)
+	fakeClient := fake.NewSimpleClientset(createTestContext("github:apache/camel-kamelets/kamelets")...)
 	repo, err := New(ctx, fakeClient, "test")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	list, err := repo.List(ctx)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.True(t, len(list) > 2)
 	k1, err := repo.Get(ctx, "kamelet1")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, "kamelet1", k1.Name)
 	k2, err := repo.Get(ctx, "kamelet2")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, "kamelet2", k2.Name)
 }
 
@@ -162,27 +162,27 @@ func TestNewRepositoryWithDefault(t *testing.T) {
 	ctx := context.Background()
 	fakeClient := fake.NewSimpleClientset(createTestContext()...)
 	repo, err := New(ctx, fakeClient, "test")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	list, err := repo.List(ctx)
-	assert.NoError(t, err)
-	assert.True(t, len(list) > 2)
+	require.NoError(t, err)
+	assert.Len(t, list, 2)
 	k1, err := repo.Get(ctx, "kamelet1")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, "kamelet1", k1.Name)
 	k2, err := repo.Get(ctx, "kamelet2")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, "kamelet2", k2.Name)
 }
 
-func createTestContext(uris ...string) (res []runtime.Object) {
-	res = []runtime.Object{
-		&v1alpha1.Kamelet{
+func createTestContext(uris ...string) []runtime.Object {
+	res := []runtime.Object{
+		&v1.Kamelet{
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: "test",
 				Name:      "kamelet1",
 			},
 		},
-		&v1alpha1.Kamelet{
+		&v1.Kamelet{
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: "test",
 				Name:      "kamelet2",

@@ -21,11 +21,13 @@ package fake
 
 import (
 	"context"
+	json "encoding/json"
+	"fmt"
 
-	v1alpha1 "github.com/apache/camel-k/pkg/apis/camel/v1alpha1"
+	v1alpha1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1alpha1"
+	camelv1alpha1 "github.com/apache/camel-k/v2/pkg/client/camel/applyconfiguration/camel/v1alpha1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	labels "k8s.io/apimachinery/pkg/labels"
-	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	types "k8s.io/apimachinery/pkg/types"
 	watch "k8s.io/apimachinery/pkg/watch"
 	testing "k8s.io/client-go/testing"
@@ -37,9 +39,9 @@ type FakeKamelets struct {
 	ns   string
 }
 
-var kameletsResource = schema.GroupVersionResource{Group: "camel.apache.org", Version: "v1alpha1", Resource: "kamelets"}
+var kameletsResource = v1alpha1.SchemeGroupVersion.WithResource("kamelets")
 
-var kameletsKind = schema.GroupVersionKind{Group: "camel.apache.org", Version: "v1alpha1", Kind: "Kamelet"}
+var kameletsKind = v1alpha1.SchemeGroupVersion.WithKind("Kamelet")
 
 // Get takes name of the kamelet, and returns the corresponding kamelet object, and an error if there is any.
 func (c *FakeKamelets) Get(ctx context.Context, name string, options v1.GetOptions) (result *v1alpha1.Kamelet, err error) {
@@ -118,7 +120,7 @@ func (c *FakeKamelets) UpdateStatus(ctx context.Context, kamelet *v1alpha1.Kamel
 // Delete takes name of the kamelet and deletes it. Returns an error if one occurs.
 func (c *FakeKamelets) Delete(ctx context.Context, name string, opts v1.DeleteOptions) error {
 	_, err := c.Fake.
-		Invokes(testing.NewDeleteAction(kameletsResource, c.ns, name), &v1alpha1.Kamelet{})
+		Invokes(testing.NewDeleteActionWithOptions(kameletsResource, c.ns, name, opts), &v1alpha1.Kamelet{})
 
 	return err
 }
@@ -135,6 +137,51 @@ func (c *FakeKamelets) DeleteCollection(ctx context.Context, opts v1.DeleteOptio
 func (c *FakeKamelets) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1alpha1.Kamelet, err error) {
 	obj, err := c.Fake.
 		Invokes(testing.NewPatchSubresourceAction(kameletsResource, c.ns, name, pt, data, subresources...), &v1alpha1.Kamelet{})
+
+	if obj == nil {
+		return nil, err
+	}
+	return obj.(*v1alpha1.Kamelet), err
+}
+
+// Apply takes the given apply declarative configuration, applies it and returns the applied kamelet.
+func (c *FakeKamelets) Apply(ctx context.Context, kamelet *camelv1alpha1.KameletApplyConfiguration, opts v1.ApplyOptions) (result *v1alpha1.Kamelet, err error) {
+	if kamelet == nil {
+		return nil, fmt.Errorf("kamelet provided to Apply must not be nil")
+	}
+	data, err := json.Marshal(kamelet)
+	if err != nil {
+		return nil, err
+	}
+	name := kamelet.Name
+	if name == nil {
+		return nil, fmt.Errorf("kamelet.Name must be provided to Apply")
+	}
+	obj, err := c.Fake.
+		Invokes(testing.NewPatchSubresourceAction(kameletsResource, c.ns, *name, types.ApplyPatchType, data), &v1alpha1.Kamelet{})
+
+	if obj == nil {
+		return nil, err
+	}
+	return obj.(*v1alpha1.Kamelet), err
+}
+
+// ApplyStatus was generated because the type contains a Status member.
+// Add a +genclient:noStatus comment above the type to avoid generating ApplyStatus().
+func (c *FakeKamelets) ApplyStatus(ctx context.Context, kamelet *camelv1alpha1.KameletApplyConfiguration, opts v1.ApplyOptions) (result *v1alpha1.Kamelet, err error) {
+	if kamelet == nil {
+		return nil, fmt.Errorf("kamelet provided to Apply must not be nil")
+	}
+	data, err := json.Marshal(kamelet)
+	if err != nil {
+		return nil, err
+	}
+	name := kamelet.Name
+	if name == nil {
+		return nil, fmt.Errorf("kamelet.Name must be provided to Apply")
+	}
+	obj, err := c.Fake.
+		Invokes(testing.NewPatchSubresourceAction(kameletsResource, c.ns, *name, types.ApplyPatchType, data, "status"), &v1alpha1.Kamelet{})
 
 	if obj == nil {
 		return nil, err

@@ -1,6 +1,7 @@
+//go:build integration
 // +build integration
 
-// To enable compilation of this file in Goland, go to "Settings -> Go -> Vendoring & Build Tags -> Custom Tags" and add "knative"
+// To enable compilation of this file in Goland, go to "Settings -> Go -> Vendoring & Build Tags -> Custom Tags" and add "integration"
 
 /*
 Licensed to the Apache Software Foundation (ASF) under one or more
@@ -24,62 +25,36 @@ package knative
 import (
 	"testing"
 
+	. "github.com/apache/camel-k/v2/e2e/support"
 	. "github.com/onsi/gomega"
-
-	corev1 "k8s.io/api/core/v1"
-
-	. "github.com/apache/camel-k/e2e/support"
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
+	"github.com/stretchr/testify/assert"
+	"io/ioutil"
 )
 
 func TestOpenAPIService(t *testing.T) {
-	WithNewTestNamespace(t, func(ns string) {
-		Expect(Kamel("install", "-n", ns, "--trait-profile", string(v1.TraitProfileKnative)).Execute()).To(Succeed())
-		Expect(Kamel(
-			"run",
-			"-n", ns,
-			"--name", "petstore",
-			"--open-api", "files/petstore-api.yaml",
-			"files/petstore.groovy",
-		).Execute()).To(Succeed())
+	RegisterTestingT(t)
 
-		Eventually(KnativeService(ns, "petstore"), TestTimeoutLong).
-			Should(Not(BeNil()))
+	openapiContent, err := ioutil.ReadFile("./files/petstore-api.yaml")
+	assert.Nil(t, err)
+	var cmDataProps = make(map[string]string)
+	cmDataProps["petstore-api.yaml"] = string(openapiContent)
+	CreatePlainTextConfigmap(ns, "my-openapi-knative", cmDataProps)
 
-		Eventually(IntegrationLogs(ns, "petstore"), TestTimeoutMedium).
-			Should(ContainSubstring("Started listPets (rest://get:/v1:/pets)"))
-		Eventually(IntegrationLogs(ns, "petstore"), TestTimeoutMedium).
-			Should(ContainSubstring("Started createPets (rest://post:/v1:/pets)"))
-		Eventually(IntegrationLogs(ns, "petstore"), TestTimeoutMedium).
-			Should(ContainSubstring("Started showPetById (rest://get:/v1:/pets/%7BpetId%7D)"))
+	Expect(KamelRunWithID(operatorID, ns,
+		"--name", "petstore",
+		"--open-api", "configmap:my-openapi-knative",
+		"files/petstore.groovy",
+	).Execute()).To(Succeed())
 
-		Expect(Kamel("delete", "--all", "-n", ns).Execute()).To(Succeed())
-	})
-}
+	Eventually(KnativeService(ns, "petstore"), TestTimeoutLong).
+		Should(Not(BeNil()))
 
-func TestOpenAPIDeployment(t *testing.T) {
-	WithNewTestNamespace(t, func(ns string) {
-		Expect(Kamel("install", "-n", ns, "--trait-profile", string(v1.TraitProfileKubernetes)).Execute()).To(Succeed())
-		Expect(Kamel(
-			"run",
-			"-n", ns,
-			"--name", "petstore",
-			"--open-api", "files/petstore-api.yaml",
-			"files/petstore.groovy",
-		).Execute()).To(Succeed())
+	Eventually(IntegrationLogs(ns, "petstore"), TestTimeoutMedium).
+		Should(ContainSubstring("Started listPets (rest://get:/v1:/pets)"))
+	Eventually(IntegrationLogs(ns, "petstore"), TestTimeoutMedium).
+		Should(ContainSubstring("Started createPets (rest://post:/v1:/pets)"))
+	Eventually(IntegrationLogs(ns, "petstore"), TestTimeoutMedium).
+		Should(ContainSubstring("Started showPetById (rest://get:/v1:/pets/%7BpetId%7D)"))
 
-		Eventually(IntegrationPodPhase(ns, "petstore"), TestTimeoutLong).
-			Should(Equal(corev1.PodRunning))
-		Eventually(Deployment(ns, "petstore"), TestTimeoutLong).
-			Should(Not(BeNil()))
-
-		Eventually(IntegrationLogs(ns, "petstore"), TestTimeoutMedium).
-			Should(ContainSubstring("Started listPets (rest://get:/v1:/pets)"))
-		Eventually(IntegrationLogs(ns, "petstore"), TestTimeoutMedium).
-			Should(ContainSubstring("Started createPets (rest://post:/v1:/pets)"))
-		Eventually(IntegrationLogs(ns, "petstore"), TestTimeoutMedium).
-			Should(ContainSubstring("Started showPetById (rest://get:/v1:/pets/%7BpetId%7D)"))
-
-		Expect(Kamel("delete", "--all", "-n", ns).Execute()).To(Succeed())
-	})
+	Expect(Kamel("delete", "--all", "-n", ns).Execute()).To(Succeed())
 }

@@ -19,15 +19,15 @@ package builder
 
 import (
 	"context"
+	"errors"
 	"os"
-	"path"
 	"sort"
 	"strconv"
 	"time"
 
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
-	"github.com/apache/camel-k/pkg/client"
-	"github.com/apache/camel-k/pkg/util/log"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+	"github.com/apache/camel-k/v2/pkg/client"
+	"github.com/apache/camel-k/v2/pkg/util/log"
 )
 
 type builderTask struct {
@@ -63,51 +63,27 @@ func (t *builderTask) Do(ctx context.Context) v1.BuildStatus {
 		Build:     *t.task,
 		BaseImage: t.task.BaseImage,
 	}
+	t.log.Infof("running builder task %s in context directory: %s", c.Build.Name, c.Path)
 
-	// Add sources
-	for _, data := range t.task.Sources {
-		c.Resources = append(c.Resources, resource{
-			Content: []byte(data.Content),
-			Target:  path.Join("sources", data.Name),
-		})
-	}
-
-	// Add resources
-	for _, data := range t.task.Resources {
-		t := path.Join("resources", data.Name)
-
-		if data.MountPath != "" {
-			t = path.Join(data.MountPath, data.Name)
-		}
-
-		c.Resources = append(c.Resources, resource{
-			Content: []byte(data.Content),
-			Target:  t,
-		})
-	}
-
-	steps := make([]Step, 0)
-	for _, step := range t.task.Steps {
-		s, ok := stepsByID[step]
-		if !ok {
-			log.Info("Skipping unknown build step", "step", step)
-			continue
-		}
-		steps = append(steps, s)
+	steps, err := StepsFrom(t.task.Steps...)
+	if err != nil {
+		t.log.Errorf(err, "invalid builder steps: %s", t.task.Steps)
+		result.Failed(err)
+		return result
 	}
 	// Sort steps by phase
 	sort.SliceStable(steps, func(i, j int) bool {
 		return steps[i].Phase() < steps[j].Phase()
 	})
 
-	t.log.Infof("steps: %v", steps)
+	t.log.Debugf("steps: %v", steps)
 
 steps:
 	for _, step := range steps {
 		select {
 
 		case <-ctx.Done():
-			if ctx.Err() == context.Canceled {
+			if errors.Is(ctx.Err(), context.Canceled) {
 				// Context canceled
 				result.Phase = v1.BuildPhaseInterrupted
 			} else {
@@ -119,7 +95,7 @@ steps:
 
 		default:
 			l := t.log.WithValues("step", step.ID(), "phase", strconv.FormatInt(int64(step.Phase()), 10), "task", t.task.Name)
-			l.Infof("executing step")
+			l.Debugf("executing step")
 
 			start := time.Now()
 			err := step.execute(&c)
@@ -129,7 +105,7 @@ steps:
 				break steps
 			}
 
-			l.Infof("step done in %f seconds", time.Since(start).Seconds())
+			l.Debugf("step done in %f seconds", time.Since(start).Seconds())
 		}
 	}
 
@@ -142,11 +118,11 @@ steps:
 	result.Artifacts = make([]v1.Artifact, 0, len(c.Artifacts))
 	result.Artifacts = append(result.Artifacts, c.Artifacts...)
 
-	t.log.Infof("dependencies: %s", t.task.Dependencies)
-	t.log.Infof("artifacts: %s", artifactIDs(c.Artifacts))
-	t.log.Infof("artifacts selected: %s", artifactIDs(c.SelectedArtifacts))
-	t.log.Infof("base image: %s", t.task.BaseImage)
-	t.log.Infof("resolved base image: %s", c.BaseImage)
+	t.log.Debugf("dependencies: %s", t.task.Dependencies)
+	t.log.Debugf("artifacts: %s", artifactIDs(c.Artifacts))
+	t.log.Debugf("artifacts selected: %s", artifactIDs(c.SelectedArtifacts))
+	t.log.Debugf("base image: %s", t.task.BaseImage)
+	t.log.Debugf("resolved base image: %s", c.BaseImage)
 
 	return result
 }

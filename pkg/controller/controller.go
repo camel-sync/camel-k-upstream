@@ -14,19 +14,24 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+
 package controller
 
 import (
-	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"context"
+
+	ctrl "sigs.k8s.io/controller-runtime"
+
+	"github.com/apache/camel-k/v2/pkg/client"
 )
 
-// AddToManagerFuncs is a list of functions to add all Controllers to the Manager
-var AddToManagerFuncs []func(manager.Manager) error
+// addToManager is a list of functions to add all Controllers to the Manager.
+var addToManager []func(context.Context, ctrl.Manager, client.Client) error
 
-// AddToManager adds all Controllers to the Manager
-func AddToManager(m manager.Manager) error {
-	for _, f := range AddToManagerFuncs {
-		if err := f(m); err != nil {
+// AddToManager adds all Controllers to the Manager.
+func AddToManager(ctx context.Context, manager ctrl.Manager, client client.Client) error {
+	for _, f := range addToManager {
+		if err := f(ctx, manager, client); err != nil {
 			return err
 		}
 	}

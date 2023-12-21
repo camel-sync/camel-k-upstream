@@ -24,13 +24,25 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-var validTaintRegexp = regexp.MustCompile(`^([\w\/_\-\.]+)(=)?([\w_\-\.]+)?:(NoSchedule|NoExecute|PreferNoSchedule):?(\d*)?$`)
-var validNodeSelectorRegexp = regexp.MustCompile(`^([\w\/_\-\.]+)=([\w_\-\.]+)$`)
-var validResourceRequirementsRegexp = regexp.MustCompile(`^(requests|limits)\.(memory|cpu)=([\w\.]+)$`)
+var (
+	validTaintRegexp                = regexp.MustCompile(`^([\w\/_\-\.]+)(=)?([\w_\-\.]+)?:(NoSchedule|NoExecute|PreferNoSchedule):?(\d*)?$`)
+	validNodeSelectorRegexp         = regexp.MustCompile(`^([\w\/_\-\.]+)=([\w_\-\.]+)$`)
+	validResourceRequirementsRegexp = regexp.MustCompile(`^(requests|limits)\.(memory|cpu)=([\w\.]+)$`)
+)
 
-// NewTolerations build an array of Tolerations from an array of string
+// ConfigMapAutogenLabel -- .
+const ConfigMapAutogenLabel = "camel.apache.org/generated"
+
+// ConfigMapOriginalFileNameLabel -- .
+const ConfigMapOriginalFileNameLabel = "camel.apache.org/filename"
+
+// ConfigMapTypeLabel -- .
+const ConfigMapTypeLabel = "camel.apache.org/config.type"
+
+// NewTolerations build an array of Tolerations from an array of string.
 func NewTolerations(taints []string) ([]corev1.Toleration, error) {
 	tolerations := make([]corev1.Toleration, 0)
 	for _, t := range taints {
@@ -64,7 +76,7 @@ func NewTolerations(taints []string) ([]corev1.Toleration, error) {
 	return tolerations, nil
 }
 
-// NewNodeSelectors build a map of NodeSelectors from an array of string
+// NewNodeSelectors build a map of NodeSelectors from an array of string.
 func NewNodeSelectors(nsArray []string) (map[string]string, error) {
 	nodeSelectors := make(map[string]string)
 	for _, ns := range nsArray {
@@ -79,7 +91,7 @@ func NewNodeSelectors(nsArray []string) (map[string]string, error) {
 }
 
 // NewResourceRequirements will build a CPU and memory requirements from an array of requests
-// matching <requestType.requestResource=value> (ie, limits.memory=256Mi)
+// matching <requestType.requestResource=value> (ie, limits.memory=256Mi).
 func NewResourceRequirements(reqs []string) (corev1.ResourceRequirements, error) {
 	resReq := corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{},
@@ -111,4 +123,75 @@ func NewResourceRequirements(reqs []string) (corev1.ResourceRequirements, error)
 	}
 
 	return resReq, nil
+}
+
+// NewConfigMap will create a ConfigMap.
+func NewConfigMap(namespace, cmName, originalFilename string, generatedKey string,
+	textData string, binaryData []byte) *corev1.ConfigMap {
+	immutable := true
+	cm := corev1.ConfigMap{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "ConfigMap",
+			APIVersion: "v1",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      cmName,
+			Namespace: namespace,
+			Labels: map[string]string{
+				ConfigMapOriginalFileNameLabel: originalFilename,
+				ConfigMapAutogenLabel:          "true",
+			},
+		},
+		Immutable: &immutable,
+	}
+	if textData != "" {
+		cm.Data = map[string]string{
+			generatedKey: textData,
+		}
+	}
+	if binaryData != nil {
+		cm.BinaryData = map[string][]byte{
+			generatedKey: binaryData,
+		}
+	}
+	return &cm
+}
+
+// NewPersistentVolumeClaim will create a NewPersistentVolumeClaim based on a StorageClass.
+func NewPersistentVolumeClaim(ns, name, storageClassName, capacityStorage string, accessMode corev1.PersistentVolumeAccessMode) *corev1.PersistentVolumeClaim {
+	pvc := corev1.PersistentVolumeClaim{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "PersistentVolumeClaim",
+			APIVersion: corev1.SchemeGroupVersion.String(),
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: ns,
+			Name:      name,
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			StorageClassName: &storageClassName,
+			AccessModes: []corev1.PersistentVolumeAccessMode{
+				accessMode,
+			},
+			Resources: corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{
+					"storage": resource.MustParse(capacityStorage),
+				},
+			},
+		},
+	}
+	return &pvc
+}
+
+// ConfigureResource will set a resource on the specified resource list or returns an error.
+func ConfigureResource(resourceQty string, list corev1.ResourceList, name corev1.ResourceName) (corev1.ResourceList, error) {
+	if resourceQty != "" {
+		v, err := resource.ParseQuantity(resourceQty)
+		if err != nil {
+			return list, err
+		}
+		list[name] = v
+	}
+
+	return list, nil
 }

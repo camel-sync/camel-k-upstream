@@ -17,7 +17,6 @@
 
 location=$(dirname $0)
 
-unset GOPATH
 GO111MODULE=on
 
 # Entering the client module
@@ -25,33 +24,39 @@ cd $location/../pkg/client/camel
 
 echo "Generating Go client code..."
 
-go run k8s.io/code-generator/cmd/client-gen \
+$(go env GOPATH)/bin/applyconfiguration-gen \
+	--input-dirs=github.com/apache/camel-k/v2/pkg/apis/camel/v1,github.com/apache/camel-k/v2/pkg/apis/camel/v1alpha1 \
+	--go-header-file=../../../script/headers/default.txt \
+	--output-base=. \
+	--output-package=github.com/apache/camel-k/v2/pkg/client/camel/applyconfiguration
+
+$(go env GOPATH)/bin/client-gen \
 	--input=camel/v1,camel/v1alpha1 \
 	--go-header-file=../../../script/headers/default.txt \
 	--clientset-name "versioned"  \
-	--input-base=github.com/apache/camel-k/pkg/apis \
+	--input-base=github.com/apache/camel-k/v2/pkg/apis \
+	--apply-configuration-package=github.com/apache/camel-k/v2/pkg/client/camel/applyconfiguration \
 	--output-base=. \
-	--output-package=github.com/apache/camel-k/pkg/client/camel/clientset
+	--output-package=github.com/apache/camel-k/v2/pkg/client/camel/clientset
 
-
-go run k8s.io/code-generator/cmd/lister-gen \
-	--input-dirs=github.com/apache/camel-k/pkg/apis/camel/v1,github.com/apache/camel-k/pkg/apis/camel/v1alpha1 \
+$(go env GOPATH)/bin/lister-gen \
+	--input-dirs=github.com/apache/camel-k/v2/pkg/apis/camel/v1,github.com/apache/camel-k/v2/pkg/apis/camel/v1alpha1 \
 	--go-header-file=../../../script/headers/default.txt \
 	--output-base=. \
-	--output-package=github.com/apache/camel-k/pkg/client/camel/listers
+	--output-package=github.com/apache/camel-k/v2/pkg/client/camel/listers
 
-go run k8s.io/code-generator/cmd/informer-gen \
-    --versioned-clientset-package=github.com/apache/camel-k/pkg/client/camel/clientset/versioned \
-	--listers-package=github.com/apache/camel-k/pkg/client/camel/listers \
-	--input-dirs=github.com/apache/camel-k/pkg/apis/camel/v1,github.com/apache/camel-k/pkg/apis/camel/v1alpha1 \
+$(go env GOPATH)/bin/informer-gen \
+    --versioned-clientset-package=github.com/apache/camel-k/v2/pkg/client/camel/clientset/versioned \
+	--listers-package=github.com/apache/camel-k/v2/pkg/client/camel/listers \
+	--input-dirs=github.com/apache/camel-k/v2/pkg/apis/camel/v1,github.com/apache/camel-k/v2/pkg/apis/camel/v1alpha1 \
 	--go-header-file=../../../script/headers/default.txt \
 	--output-base=. \
-	--output-package=github.com/apache/camel-k/pkg/client/camel/informers
+	--output-package=github.com/apache/camel-k/v2/pkg/client/camel/informers
 
 
 # hack to fix non go-module compliance
 rm -rf ./clientset
 rm -rf ./informers
 rm -rf ./listers
-cp -R ./github.com/apache/camel-k/pkg/client/camel/* .
+cp -R ./github.com/apache/camel-k/v2/pkg/client/camel/* .
 rm -rf ./github.com

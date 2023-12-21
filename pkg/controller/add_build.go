@@ -14,13 +14,13 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+
 package controller
 
 import (
-	"github.com/apache/camel-k/pkg/controller/build"
+	"github.com/apache/camel-k/v2/pkg/controller/build"
 )
 
 func init() {
-	// AddToManagerFuncs is a list of functions to create controllers and add them to a manager.
-	AddToManagerFuncs = append(AddToManagerFuncs, build.Add)
+	addToManager = append(addToManager, build.Add)
 }

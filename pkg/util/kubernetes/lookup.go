@@ -20,14 +20,15 @@ package kubernetes
 import (
 	"context"
 
-	"github.com/apache/camel-k/pkg/client"
+	"github.com/apache/camel-k/v2/pkg/client"
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// LookupConfigmap will look for any k8s Configmap with a given name in a given namespace
+// LookupConfigmap will look for any k8s Configmap with a given name in a given namespace.
 func LookupConfigmap(ctx context.Context, c client.Client, ns string, name string) *corev1.ConfigMap {
 	cm := corev1.ConfigMap{
 		TypeMeta: metav1.TypeMeta{
@@ -51,7 +52,7 @@ func LookupConfigmap(ctx context.Context, c client.Client, ns string, name strin
 	return &cm
 }
 
-// LookupSecret will look for any k8s Secret with a given name in a given namespace
+// LookupSecret will look for any k8s Secret with a given name in a given namespace.
 func LookupSecret(ctx context.Context, c client.Client, ns string, name string) *corev1.Secret {
 	secret := corev1.Secret{
 		TypeMeta: metav1.TypeMeta{
@@ -73,4 +74,45 @@ func LookupSecret(ctx context.Context, c client.Client, ns string, name string) 
 		return nil
 	}
 	return &secret
+}
+
+// LookupPersistentVolumeClaim will look for any k8s PersistentVolumeClaim with a given name in a given namespace.
+func LookupPersistentVolumeClaim(ctx context.Context, c client.Client, ns string, name string) (*corev1.PersistentVolumeClaim, error) {
+	pvc := corev1.PersistentVolumeClaim{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "PersistentVolumeClaim",
+			APIVersion: corev1.SchemeGroupVersion.String(),
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: ns,
+			Name:      name,
+		},
+	}
+	key := ctrl.ObjectKey{
+		Namespace: ns,
+		Name:      name,
+	}
+	if err := c.Get(ctx, key, &pvc); err != nil && k8serrors.IsNotFound(err) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	return &pvc, nil
+}
+
+// LookupDefaultStorageClass will look for the default k8s StorageClass in a given namespace.
+func LookupDefaultStorageClass(ctx context.Context, c client.Client) (*storagev1.StorageClass, error) {
+	storageClasses, err := c.StorageV1().StorageClasses().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		if k8serrors.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	for _, sc := range storageClasses.Items {
+		if sc.Annotations["storageclass.kubernetes.io/is-default-class"] == "true" {
+			return &sc, nil
+		}
+	}
+	return nil, nil
 }

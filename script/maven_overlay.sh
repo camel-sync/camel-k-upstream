@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 # Licensed to the Apache Software Foundation (ASF) under one or more
 # contributor license agreements.  See the NOTICE file distributed with
@@ -15,14 +15,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+location=$(dirname $0)
+rootdir=$(realpath ${location}/../)
+
+if [ "$#" -lt 1 ]; then
+  echo "usage: $0 <output directory>"
+  exit 1
+fi
+
 options=""
 if [ "$CI" = "true" ]; then
   options="--batch-mode"
 fi
 
-mvn $options dependency:get -Dartifact=ch.qos.logback:logback-core:1.2.3 -Ddest=$1
-mvn $options dependency:get -Dartifact=ch.qos.logback:logback-classic:1.2.3 -Ddest=$1
-mvn $options dependency:get -Dartifact=net.logstash.logback:logstash-logback-encoder:4.11 -Ddest=$1
-mvn $options dependency:get -Dartifact=com.fasterxml.jackson.core:jackson-annotations:2.9.10 -Ddest=$1
-mvn $options dependency:get -Dartifact=com.fasterxml.jackson.core:jackson-core:2.9.10 -Ddest=$1
-mvn $options dependency:get -Dartifact=com.fasterxml.jackson.core:jackson-databind:2.9.10.8 -Ddest=$1
+output_dir=$1
+
+mvn -q $options -f java/maven-logging/pom.xml clean package
+cp java/maven-logging/target/maven-overlay/*.jar ${output_dir}
+cp java/maven-logging/src/main/resources/logback.xml ${output_dir}

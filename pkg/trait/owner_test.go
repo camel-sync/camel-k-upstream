@@ -25,8 +25,8 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
-	"github.com/apache/camel-k/pkg/util/test"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+	traitv1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1/trait"
 )
 
 func TestOwner(t *testing.T) {
@@ -41,12 +41,14 @@ func TestOwner(t *testing.T) {
 }
 
 func SetUpOwnerEnvironment(t *testing.T) *Environment {
+	t.Helper()
+
 	env := createTestEnv(t, v1.IntegrationPlatformClusterOpenShift, "camel:core")
-	env.Integration.Spec.Traits = map[string]v1.TraitSpec{
-		"owner": test.TraitSpecFromMap(t, map[string]interface{}{
-			"targetLabels":      []string{"com.mycompany/mylabel1"},
-			"targetAnnotations": []string{"com.mycompany/myannotation2"},
-		}),
+	env.Integration.Spec.Traits = v1.Traits{
+		Owner: &traitv1.OwnerTrait{
+			TargetLabels:      []string{"com.mycompany/mylabel1"},
+			TargetAnnotations: []string{"com.mycompany/myannotation2"},
+		},
 	}
 
 	env.Integration.SetLabels(map[string]string{
@@ -63,6 +65,8 @@ func SetUpOwnerEnvironment(t *testing.T) *Environment {
 }
 
 func ValidateOwnerResources(t *testing.T, env *Environment, withOwnerRef bool) {
+	t.Helper()
+
 	assert.NotEmpty(t, env.Resources.Items())
 
 	env.Resources.VisitMetaObject(func(res metav1.Object) {
@@ -81,10 +85,13 @@ func ValidateOwnerResources(t *testing.T, env *Environment, withOwnerRef bool) {
 	})
 
 	assert.Len(t, deployments, 1)
+	// nolint: gosec // deployments len asserted before
 	ValidateLabelsAndAnnotations(t, &deployments[0].Spec.Template)
 }
 
 func ValidateLabelsAndAnnotations(t *testing.T, res metav1.Object) {
+	t.Helper()
+
 	assert.Contains(t, res.GetLabels(), "com.mycompany/mylabel1")
 	assert.Equal(t, "myvalue1", res.GetLabels()["com.mycompany/mylabel1"])
 

@@ -20,11 +20,10 @@ package bindings
 
 import (
 	"context"
-	"fmt"
 
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
-	"github.com/apache/camel-k/pkg/apis/camel/v1alpha1"
-	"github.com/apache/camel-k/pkg/client"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+
+	"github.com/apache/camel-k/v2/pkg/client"
 )
 
 const (
@@ -33,28 +32,29 @@ const (
 	OrderLast     = 100
 )
 
-// Binding represents how a Kubernetes object is represented in Camel K resources
+// Binding represents how a Kubernetes object is represented in Camel K resources.
 type Binding struct {
 	// URI is the Camel URI equivalent
 	URI string
 	// Step is to support complex mapping such as Camel's EIPs
 	Step map[string]interface{}
 	// Traits is a partial trait specification that should be merged into the integration
-	Traits map[string]v1.TraitSpec
+	Traits v1.Traits
 	// ApplicationProperties contain properties that should be set on the integration for the binding to work
 	ApplicationProperties map[string]string
 }
 
-// BindingProvider maps a KameletBinding endpoint into Camel K resources
+// BindingProvider maps a Binding endpoint into Camel K resources.
 type BindingProvider interface {
 	// ID returns the name of the binding provider
 	ID() string
 	// Translate does the actual mapping
-	Translate(ctx BindingContext, endpointContext EndpointContext, endpoint v1alpha1.Endpoint) (*Binding, error)
+	Translate(ctx BindingContext, endpointContext EndpointContext, endpoint v1.Endpoint) (*Binding, error)
 	// Order returns the relative order of execution of the binding provider
 	Order() int
 }
 
+// nolint: containedctx
 type BindingContext struct {
 	Ctx       context.Context
 	Client    client.Client
@@ -63,14 +63,6 @@ type BindingContext struct {
 }
 
 type EndpointContext struct {
-	Type     v1alpha1.EndpointType
+	Type     v1.EndpointType
 	Position *int
-}
-
-func (c EndpointContext) GenerateID() string {
-	id := string(c.Type)
-	if c.Position != nil {
-		id = fmt.Sprintf("%s-%d", id, *c.Position)
-	}
-	return id
 }

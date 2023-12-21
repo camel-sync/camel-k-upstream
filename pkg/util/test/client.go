@@ -19,14 +19,17 @@ package test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
-	"github.com/apache/camel-k/pkg/apis"
-	"github.com/apache/camel-k/pkg/client"
-	camel "github.com/apache/camel-k/pkg/client/camel/clientset/versioned"
-	fakecamelclientset "github.com/apache/camel-k/pkg/client/camel/clientset/versioned/fake"
-	camelv1 "github.com/apache/camel-k/pkg/client/camel/clientset/versioned/typed/camel/v1"
-	camelv1alpha1 "github.com/apache/camel-k/pkg/client/camel/clientset/versioned/typed/camel/v1alpha1"
+	"github.com/apache/camel-k/v2/pkg/apis"
+	"github.com/apache/camel-k/v2/pkg/client"
+	camel "github.com/apache/camel-k/v2/pkg/client/camel/clientset/versioned"
+	fakecamelclientset "github.com/apache/camel-k/v2/pkg/client/camel/clientset/versioned/fake"
+	camelv1 "github.com/apache/camel-k/v2/pkg/client/camel/clientset/versioned/typed/camel/v1"
+	camelv1alpha1 "github.com/apache/camel-k/v2/pkg/client/camel/clientset/versioned/typed/camel/v1alpha1"
+	"github.com/apache/camel-k/v2/pkg/util"
+	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -36,11 +39,14 @@ import (
 	fakeclientset "k8s.io/client-go/kubernetes/fake"
 	clientscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/scale"
+	fakescale "k8s.io/client-go/scale/fake"
+	"k8s.io/client-go/testing"
 	controller "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-// NewFakeClient ---
+// NewFakeClient ---.
 func NewFakeClient(initObjs ...runtime.Object) (client.Client, error) {
 	scheme := clientscheme.Scheme
 
@@ -49,7 +55,7 @@ func NewFakeClient(initObjs ...runtime.Object) (client.Client, error) {
 		return nil, err
 	}
 
-	c := fake.NewFakeClientWithScheme(scheme, initObjs...)
+	c := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(initObjs...).Build()
 
 	camelClientset := fakecamelclientset.NewSimpleClientset(filterObjects(scheme, initObjs, func(gvk schema.GroupVersionKind) bool {
 		return strings.Contains(gvk.Group, "camel")
@@ -57,15 +63,49 @@ func NewFakeClient(initObjs ...runtime.Object) (client.Client, error) {
 	clientset := fakeclientset.NewSimpleClientset(filterObjects(scheme, initObjs, func(gvk schema.GroupVersionKind) bool {
 		return !strings.Contains(gvk.Group, "camel") && !strings.Contains(gvk.Group, "knative")
 	})...)
+	replicasCount := make(map[string]int32)
+	fakescaleclient := fakescale.FakeScaleClient{}
+	fakescaleclient.AddReactor("update", "*", func(rawAction testing.Action) (bool, runtime.Object, error) {
+		action := rawAction.(testing.UpdateAction)       // nolint: forcetypeassert
+		obj := action.GetObject().(*autoscalingv1.Scale) // nolint: forcetypeassert
+		replicas := obj.Spec.Replicas
+		key := fmt.Sprintf("%s:%s:%s/%s", action.GetResource().Group, action.GetResource().Resource, action.GetNamespace(), obj.GetName())
+		replicasCount[key] = replicas
+		return true, &autoscalingv1.Scale{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      obj.Name,
+				Namespace: action.GetNamespace(),
+			},
+			Spec: autoscalingv1.ScaleSpec{
+				Replicas: replicas,
+			},
+		}, nil
+	})
+	fakescaleclient.AddReactor("get", "*", func(rawAction testing.Action) (bool, runtime.Object, error) {
+		action := rawAction.(testing.GetAction) // nolint: forcetypeassert
+		key := fmt.Sprintf("%s:%s:%s/%s", action.GetResource().Group, action.GetResource().Resource, action.GetNamespace(), action.GetName())
+		obj := &autoscalingv1.Scale{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      action.GetName(),
+				Namespace: action.GetNamespace(),
+			},
+			Spec: autoscalingv1.ScaleSpec{
+				Replicas: replicasCount[key],
+			},
+		}
+		return true, obj, nil
+	})
 
 	return &FakeClient{
 		Client:    c,
 		Interface: clientset,
 		camel:     camelClientset,
+		scales:    &fakescaleclient,
 	}, nil
 }
 
-func filterObjects(scheme *runtime.Scheme, input []runtime.Object, filter func(gvk schema.GroupVersionKind) bool) (res []runtime.Object) {
+func filterObjects(scheme *runtime.Scheme, input []runtime.Object, filter func(gvk schema.GroupVersionKind) bool) []runtime.Object {
+	var res []runtime.Object
 	for _, obj := range input {
 		kinds, _, _ := scheme.ObjectKinds(obj)
 		for _, k := range kinds {
@@ -78,11 +118,14 @@ func filterObjects(scheme *runtime.Scheme, input []runtime.Object, filter func(g
 	return res
 }
 
-// FakeClient ---
+// FakeClient ---.
 type FakeClient struct {
 	controller.Client
 	kubernetes.Interface
-	camel camel.Interface
+	camel            camel.Interface
+	scales           *fakescale.FakeScaleClient
+	disabledGroups   []string
+	enabledOpenshift bool
 }
 
 func (c *FakeClient) CamelV1() camelv1.CamelV1Interface {
@@ -93,7 +136,7 @@ func (c *FakeClient) CamelV1alpha1() camelv1alpha1.CamelV1alpha1Interface {
 	return c.camel.CamelV1alpha1()
 }
 
-// GetScheme ---
+// GetScheme ---.
 func (c *FakeClient) GetScheme() *runtime.Scheme {
 	return clientscheme.Scheme
 }
@@ -106,27 +149,66 @@ func (c *FakeClient) GetCurrentNamespace(kubeConfig string) (string, error) {
 	return "", nil
 }
 
-// Patch mimicks patch for server-side apply and simply creates the obj
+// Patch mimicks patch for server-side apply and simply creates the obj.
 func (c *FakeClient) Patch(ctx context.Context, obj controller.Object, patch controller.Patch, opts ...controller.PatchOption) error {
-	return c.Create(ctx, obj)
+	if err := c.Create(ctx, obj); err != nil {
+		// Create fails if object already exists. Try to update it.
+		return c.Update(ctx, obj)
+	}
+	return nil
+}
+
+func (c *FakeClient) DisableAPIGroupDiscovery(group string) {
+	c.disabledGroups = append(c.disabledGroups, group)
+}
+
+func (c *FakeClient) EnableOpenshiftDiscovery() {
+	c.enabledOpenshift = true
 }
 
 func (c *FakeClient) Discovery() discovery.DiscoveryInterface {
 	return &FakeDiscovery{
 		DiscoveryInterface: c.Interface.Discovery(),
+		disabledGroups:     c.disabledGroups,
+		enabledOpenshift:   c.enabledOpenshift,
 	}
+}
+
+func (c *FakeClient) ServerOrClientSideApplier() client.ServerOrClientSideApplier {
+	return client.ServerOrClientSideApplier{
+		Client: c,
+	}
+}
+
+func (c *FakeClient) ScalesClient() (scale.ScalesGetter, error) {
+	return c.scales, nil
 }
 
 type FakeDiscovery struct {
 	discovery.DiscoveryInterface
+	disabledGroups   []string
+	enabledOpenshift bool
 }
 
 func (f *FakeDiscovery) ServerResourcesForGroupVersion(groupVersion string) (*metav1.APIResourceList, error) {
 	// Normalize the fake discovery to behave like the real implementation when checking for openshift
 	if groupVersion == "image.openshift.io/v1" {
-		return nil, k8serrors.NewNotFound(schema.GroupResource{
-			Group: "image.openshift.io",
-		}, "")
+		if f.enabledOpenshift {
+			return &metav1.APIResourceList{
+				GroupVersion: "image.openshift.io/v1",
+			}, nil
+		} else {
+			return nil, k8serrors.NewNotFound(schema.GroupResource{
+				Group: "image.openshift.io",
+			}, "")
+		}
+	}
+
+	// used in util/knative/enabled.go to verify if knative is installed
+	if groupVersion == "serving.knative.dev/v1" && !util.StringSliceExists(f.disabledGroups, groupVersion) {
+		return &metav1.APIResourceList{
+			GroupVersion: "serving.knative.dev/v1",
+		}, nil
 	}
 	return f.DiscoveryInterface.ServerResourcesForGroupVersion(groupVersion)
 }

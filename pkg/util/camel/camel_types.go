@@ -19,16 +19,16 @@ package camel
 
 import (
 	"github.com/Masterminds/semver"
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
 )
 
-// CatalogVersion --
+// CatalogVersion --.
 type CatalogVersion struct {
 	RuntimeVersion *semver.Version
 	Catalog        *v1.CamelCatalog
 }
 
-// CatalogVersionCollection --
+// CatalogVersionCollection --.
 type CatalogVersionCollection []CatalogVersion
 
 // Len returns the length of a collection. The number of CatalogVersion instances

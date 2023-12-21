@@ -20,8 +20,8 @@ package maven
 import (
 	"testing"
 
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
-	"github.com/apache/camel-k/pkg/util"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+	"github.com/apache/camel-k/v2/pkg/util"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -80,6 +80,7 @@ const expectedPom = `<?xml version="1.0" encoding="UTF-8"?>
       </releases>
     </pluginRepository>
   </pluginRepositories>
+  <profiles><profile><id>custom</id></profile></profiles>
 </project>`
 
 func TestPomGeneration(t *testing.T) {
@@ -128,6 +129,8 @@ func TestPomGeneration(t *testing.T) {
 			},
 		},
 	}
+
+	project.Profiles = ProfilesContent{InnerXML: `<profile><id>custom</id></profile>`}
 
 	pom, err := util.EncodeXML(project)
 

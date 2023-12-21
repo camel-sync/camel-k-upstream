@@ -18,21 +18,22 @@ limitations under the License.
 package digest
 
 import (
+	"os"
 	"testing"
 
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestDigestUsesAnnotations(t *testing.T) {
 	it := v1.Integration{}
-	digest1, err := ComputeForIntegration(&it)
+	digest1, err := ComputeForIntegration(&it, nil, nil)
 	assert.NoError(t, err)
 
 	it.Annotations = map[string]string{
 		"another.annotation": "hello",
 	}
-	digest2, err := ComputeForIntegration(&it)
+	digest2, err := ComputeForIntegration(&it, nil, nil)
 	assert.NoError(t, err)
 	assert.Equal(t, digest1, digest2)
 
@@ -40,7 +41,22 @@ func TestDigestUsesAnnotations(t *testing.T) {
 		"another.annotation":                   "hello",
 		"trait.camel.apache.org/cron.fallback": "true",
 	}
-	digest3, err := ComputeForIntegration(&it)
+	digest3, err := ComputeForIntegration(&it, nil, nil)
 	assert.NoError(t, err)
 	assert.NotEqual(t, digest1, digest3)
+}
+
+func TestDigestSHA1FromTempFile(t *testing.T) {
+	var tmpFile *os.File
+	var err error
+	if tmpFile, err = os.CreateTemp("", "camel-k-"); err != nil {
+		t.Error(err)
+	}
+
+	assert.Nil(t, tmpFile.Close())
+	assert.Nil(t, os.WriteFile(tmpFile.Name(), []byte("hello test!"), 0o400))
+
+	sha1, err := ComputeSHA1(tmpFile.Name())
+	assert.NoError(t, err)
+	assert.Equal(t, "OXPdxTeLf5rqnsqvTi0CgmWoN/0=", sha1)
 }

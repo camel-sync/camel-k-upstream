@@ -18,17 +18,27 @@ limitations under the License.
 package cmd
 
 import (
+	"os"
 	"testing"
 
-	"github.com/apache/camel-k/pkg/util/test"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+	"github.com/apache/camel-k/v2/pkg/platform"
+	"github.com/apache/camel-k/v2/pkg/util/test"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const cmdBind = "bind"
 
+// nolint: unparam
 func initializeBindCmdOptions(t *testing.T) (*bindCmdOptions, *cobra.Command, RootCmdOptions) {
-	options, rootCmd := kamelTestPreAddCommandInit()
+	t.Helper()
+
+	defaultIntegrationPlatform := v1.NewIntegrationPlatform("default", platform.DefaultPlatformName)
+	fakeClient, _ := test.NewFakeClient(&defaultIntegrationPlatform)
+
+	options, rootCmd := kamelTestPreAddCommandInitWithClient(fakeClient)
 	bindCmdOptions := addTestBindCmd(*options, rootCmd)
 	kamelTestPostAddCommandInit(t, rootCmd)
 
@@ -36,11 +46,8 @@ func initializeBindCmdOptions(t *testing.T) (*bindCmdOptions, *cobra.Command, Ro
 }
 
 func addTestBindCmd(options RootCmdOptions, rootCmd *cobra.Command) *bindCmdOptions {
-	//add a testing version of bind Command
+	// add a testing version of bind Command
 	bindCmd, bindOptions := newCmdBind(&options)
-	bindCmd.PersistentPreRunE = func(c *cobra.Command, args []string) error {
-		return nil
-	}
 	bindCmd.Args = test.ArbitraryArgs
 	rootCmd.AddCommand(bindCmd)
 	return bindOptions
@@ -52,7 +59,7 @@ func TestBindOutputJSON(t *testing.T) {
 	assert.Equal(t, "json", buildCmdOptions.OutputFormat)
 
 	assert.Nil(t, err)
-	assert.Equal(t, `{"kind":"KameletBinding","apiVersion":"camel.apache.org/v1alpha1","metadata":{"name":"my-to-my","creationTimestamp":null},"spec":{"source":{"uri":"my:src"},"sink":{"uri":"my:dst"}},"status":{}}`, output)
+	assert.Equal(t, `{"kind":"Pipe","apiVersion":"camel.apache.org/v1","metadata":{"name":"my-to-my","creationTimestamp":null,"annotations":{"camel.apache.org/operator.id":"camel-k"}},"spec":{"source":{"uri":"my:src"},"sink":{"uri":"my:dst"}},"status":{}}`, output)
 }
 
 func TestBindOutputYAML(t *testing.T) {
@@ -61,9 +68,11 @@ func TestBindOutputYAML(t *testing.T) {
 	assert.Equal(t, "yaml", buildCmdOptions.OutputFormat)
 
 	assert.Nil(t, err)
-	assert.Equal(t, `apiVersion: camel.apache.org/v1alpha1
-kind: KameletBinding
+	assert.Equal(t, `apiVersion: camel.apache.org/v1
+kind: Pipe
 metadata:
+  annotations:
+    camel.apache.org/operator.id: camel-k
   creationTimestamp: null
   name: my-to-my
 spec:
@@ -86,23 +95,25 @@ func TestBindOutputUnknownFormat(t *testing.T) {
 func TestBindErrorHandlerDLCKamelet(t *testing.T) {
 	buildCmdOptions, bindCmd, _ := initializeBindCmdOptions(t)
 	output, err := test.ExecuteCommand(bindCmd, cmdBind, "my:src", "my:dst", "-o", "yaml",
-		"--error-handler", "dlc:my-kamelet", "-p", "error-handler.my-prop=value")
+		"--error-handler", "sink:my-kamelet", "-p", "error-handler.my-prop=value")
 	assert.Equal(t, "yaml", buildCmdOptions.OutputFormat)
 
 	assert.Nil(t, err)
-	assert.Equal(t, `apiVersion: camel.apache.org/v1alpha1
-kind: KameletBinding
+	assert.Equal(t, `apiVersion: camel.apache.org/v1
+kind: Pipe
 metadata:
+  annotations:
+    camel.apache.org/operator.id: camel-k
   creationTimestamp: null
   name: my-to-my
 spec:
   errorHandler:
-    dead-letter-channel:
+    sink:
       endpoint:
         properties:
           my-prop: value
         ref:
-          apiVersion: camel.apache.org/v1alpha1
+          apiVersion: camel.apache.org/v1
           kind: Kamelet
           name: my-kamelet
   sink:
@@ -120,9 +131,11 @@ func TestBindErrorHandlerNone(t *testing.T) {
 	assert.Equal(t, "yaml", buildCmdOptions.OutputFormat)
 
 	assert.Nil(t, err)
-	assert.Equal(t, `apiVersion: camel.apache.org/v1alpha1
-kind: KameletBinding
+	assert.Equal(t, `apiVersion: camel.apache.org/v1
+kind: Pipe
 metadata:
+  annotations:
+    camel.apache.org/operator.id: camel-k
   creationTimestamp: null
   name: my-to-my
 spec:
@@ -136,25 +149,112 @@ status: {}
 `, output)
 }
 
-func TestBindErrorHandlerRef(t *testing.T) {
+func TestBindErrorHandlerLog(t *testing.T) {
 	buildCmdOptions, bindCmd, _ := initializeBindCmdOptions(t)
 	output, err := test.ExecuteCommand(bindCmd, cmdBind, "my:src", "my:dst", "-o", "yaml",
-		"--error-handler", "ref:my-registry-reference")
+		"--error-handler", "log")
 	assert.Equal(t, "yaml", buildCmdOptions.OutputFormat)
 
 	assert.Nil(t, err)
-	assert.Equal(t, `apiVersion: camel.apache.org/v1alpha1
-kind: KameletBinding
+	assert.Equal(t, `apiVersion: camel.apache.org/v1
+kind: Pipe
 metadata:
+  annotations:
+    camel.apache.org/operator.id: camel-k
   creationTimestamp: null
   name: my-to-my
 spec:
   errorHandler:
-    ref: my-registry-reference
+    log: null
   sink:
     uri: my:dst
   source:
     uri: my:src
 status: {}
 `, output)
+}
+
+func TestBindTraits(t *testing.T) {
+	buildCmdOptions, bindCmd, _ := initializeBindCmdOptions(t)
+	output, err := test.ExecuteCommand(bindCmd, cmdBind, "my:src", "my:dst", "-o", "yaml", "-t", "mount.configs=configmap:my-cm", "-c", "my-service-binding")
+	assert.Equal(t, "yaml", buildCmdOptions.OutputFormat)
+
+	assert.Nil(t, err)
+	assert.Equal(t, `apiVersion: camel.apache.org/v1
+kind: Pipe
+metadata:
+  annotations:
+    camel.apache.org/operator.id: camel-k
+  creationTimestamp: null
+  name: my-to-my
+spec:
+  integration:
+    traits:
+      mount:
+        configs:
+        - configmap:my-cm
+      service-binding:
+        services:
+        - my-service-binding
+  sink:
+    uri: my:dst
+  source:
+    uri: my:src
+status: {}
+`, output)
+}
+
+func TestBindSteps(t *testing.T) {
+	buildCmdOptions, bindCmd, _ := initializeBindCmdOptions(t)
+	output, err := test.ExecuteCommand(bindCmd, cmdBind, "my:src", "my:dst", "-o", "yaml",
+		"--step", "dst:step1", "--step", "src:step2",
+		"-p", "step-1.var1=my-step1-var1", "-p", "step-1.var2=my-step1-var2",
+		"-p", "step-2.var1=my-step2-var1", "-p", "step-2.var2=my-step2-var2")
+	assert.Equal(t, "yaml", buildCmdOptions.OutputFormat)
+
+	assert.Nil(t, err)
+	assert.Equal(t, `apiVersion: camel.apache.org/v1
+kind: Pipe
+metadata:
+  annotations:
+    camel.apache.org/operator.id: camel-k
+  creationTimestamp: null
+  name: my-to-my
+spec:
+  sink:
+    uri: my:dst
+  source:
+    uri: my:src
+  steps:
+  - properties:
+      var1: my-step1-var1
+      var2: my-step1-var2
+    uri: dst:step1
+  - properties:
+      var1: my-step2-var1
+      var2: my-step2-var2
+    uri: src:step2
+status: {}
+`, output)
+}
+
+func TestBindServiceAccountName(t *testing.T) {
+	_, bindCmd, _ := initializeBindCmdOptions(t)
+	output, err := test.ExecuteCommand(bindCmd, cmdBind, "timer:foo", "log:bar",
+		"-o", "yaml",
+		"--service-account", "my-service-account")
+
+	assert.Nil(t, err)
+	assert.Contains(t, output, "serviceAccountName: my-service-account")
+}
+
+func TestBindOutputWithoutKubernetesCluster(t *testing.T) {
+	tmpFile, err := os.CreateTemp("", "camel-k-kubeconfig-*")
+	require.NoError(t, err)
+
+	bindCmdOptions, bindCmd, _ := initializeBindCmdOptions(t)
+	bindCmdOptions._client = nil // remove the default fake client which can bypass this test
+	bindCmdOptions.KubeConfig = tmpFile.Name()
+	_, err = test.ExecuteCommand(bindCmd, cmdBind, "my:src", "my:dst", "-o", "yaml")
+	require.NoError(t, err)
 }

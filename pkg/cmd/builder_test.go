@@ -20,14 +20,17 @@ package cmd
 import (
 	"testing"
 
-	"github.com/apache/camel-k/pkg/util/test"
+	"github.com/apache/camel-k/v2/pkg/util/test"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 )
 
 const cmdBuilder = "builder"
 
+// nolint: unparam
 func initializeBuilderCmdOptions(t *testing.T) (*builderCmdOptions, *cobra.Command, RootCmdOptions) {
+	t.Helper()
+
 	options, rootCmd := kamelTestPreAddCommandInit()
 	builderCmdOptions := addTestBuilderCmd(*options, rootCmd)
 	kamelTestPostAddCommandInit(t, rootCmd)
@@ -36,7 +39,7 @@ func initializeBuilderCmdOptions(t *testing.T) (*builderCmdOptions, *cobra.Comma
 }
 
 func addTestBuilderCmd(options RootCmdOptions, rootCmd *cobra.Command) *builderCmdOptions {
-	//add a testing version of builder Command
+	// add a testing version of builder Command
 	builderCmd, builderOptions := newCmdBuilder(&options)
 	builderCmd.RunE = func(c *cobra.Command, args []string) error {
 		return nil

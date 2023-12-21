@@ -20,4 +20,4 @@
       sources:
         - url: ./../camel-k
         - url: https://github.com/apache/camel-k-runtime.git
-          branch_includes: release-1.9.x
+          branch_includes: main

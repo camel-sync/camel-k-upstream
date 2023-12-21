@@ -1,3 +1,4 @@
+//go:build integration
 // +build integration
 
 // To enable compilation of this file in Goland, go to "Settings -> Go -> Vendoring & Build Tags -> Custom Tags" and add "integration"
@@ -27,43 +28,42 @@ import (
 
 	. "github.com/onsi/gomega"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 
-	. "github.com/apache/camel-k/e2e/support"
+	. "github.com/apache/camel-k/v2/e2e/support"
 )
 
 func TestMasterTrait(t *testing.T) {
-	WithNewTestNamespace(t, func(ns string) {
-		Expect(Kamel("install", "-n", ns).Execute()).To(Succeed())
+	RegisterTestingT(t)
 
-		t.Run("master works", func(t *testing.T) {
-			Expect(Kamel("run", "-n", ns, "files/Master.java").Execute()).To(Succeed())
-			Eventually(IntegrationPodPhase(ns, "master"), TestTimeoutMedium).Should(Equal(v1.PodRunning))
-			Eventually(IntegrationLogs(ns, "master"), TestTimeoutShort).Should(ContainSubstring("Magicstring!"))
-			Expect(Kamel("delete", "--all", "-n", ns).Execute()).To(Succeed())
-		})
-
-		t.Run("only one integration with master runs", func(t *testing.T) {
-			Expect(Kamel("run", "-n", ns, "files/Master.java",
-				"--name", "first",
-				"--label", "leader-group=same",
-				"-t", "master.label-key=leader-group",
-				"-t", "master.label-value=same",
-				"-t", "owner.target-labels=leader-group").Execute()).To(Succeed())
-			Eventually(IntegrationPodPhase(ns, "first"), TestTimeoutMedium).Should(Equal(v1.PodRunning))
-			Eventually(IntegrationLogs(ns, "first"), TestTimeoutShort).Should(ContainSubstring("Magicstring!"))
-			// Start a second integration with the same lock (it should not start the route)
-			Expect(Kamel("run", "-n", ns, "files/Master.java",
-				"--name", "second",
-				"--label", "leader-group=same",
-				"-t", "master.label-key=leader-group",
-				"-t", "master.label-value=same",
-				"-t", "master.configmap=first-lock",
-				"-t", "owner.target-labels=leader-group").Execute()).To(Succeed())
-			Eventually(IntegrationPodPhase(ns, "second"), TestTimeoutMedium).Should(Equal(v1.PodRunning))
-			Eventually(IntegrationLogs(ns, "second"), TestTimeoutShort).Should(ContainSubstring("started in"))
-			Eventually(IntegrationLogs(ns, "second"), 30*time.Second).ShouldNot(ContainSubstring("Magicstring!"))
-			Expect(Kamel("delete", "--all", "-n", ns).Execute()).To(Succeed())
-		})
+	t.Run("master works", func(t *testing.T) {
+		Expect(KamelRunWithID(operatorID, ns, "files/Master.java").Execute()).To(Succeed())
+		Eventually(IntegrationPodPhase(ns, "master"), TestTimeoutLong).Should(Equal(corev1.PodRunning))
+		Eventually(IntegrationLogs(ns, "master"), TestTimeoutShort).Should(ContainSubstring("Magicstring!"))
+		Expect(Kamel("delete", "--all", "-n", ns).Execute()).To(Succeed())
 	})
+
+	t.Run("only one integration with master runs", func(t *testing.T) {
+		Expect(KamelRunWithID(operatorID, ns, "files/Master.java",
+			"--name", "first",
+			"--label", "leader-group=same",
+			"-t", "master.label-key=leader-group",
+			"-t", "master.label-value=same",
+			"-t", "owner.target-labels=leader-group").Execute()).To(Succeed())
+		Eventually(IntegrationPodPhase(ns, "first"), TestTimeoutLong).Should(Equal(corev1.PodRunning))
+		Eventually(IntegrationLogs(ns, "first"), TestTimeoutShort).Should(ContainSubstring("Magicstring!"))
+		// Start a second integration with the same lock (it should not start the route)
+		Expect(KamelRunWithID(operatorID, ns, "files/Master.java",
+			"--name", "second",
+			"--label", "leader-group=same",
+			"-t", "master.label-key=leader-group",
+			"-t", "master.label-value=same",
+			"-t", "master.resource-name=first-lock",
+			"-t", "owner.target-labels=leader-group").Execute()).To(Succeed())
+		Eventually(IntegrationPodPhase(ns, "second"), TestTimeoutLong).Should(Equal(corev1.PodRunning))
+		Eventually(IntegrationLogs(ns, "second"), TestTimeoutShort).Should(ContainSubstring("started in"))
+		Eventually(IntegrationLogs(ns, "second"), 30*time.Second).ShouldNot(ContainSubstring("Magicstring!"))
+	})
+
+	Expect(Kamel("delete", "--all", "-n", ns).Execute()).To(Succeed())
 }

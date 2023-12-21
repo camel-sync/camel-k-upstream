@@ -17,6 +17,8 @@ limitations under the License.
 
 // NOTE: this file has been originally copied from https://github.com/kubernetes/apiextensions-apiserver/blob/33bb2d8b009bae408e40818a93877459efeb4cb1/pkg/apis/apiextensions/v1/types_jsonschema.go
 
+// Package v1alpha1 is deprecated: use the v1 API instead
+// Deprecated
 package v1alpha1
 
 import (
@@ -26,6 +28,7 @@ import (
 
 type JSONSchemaProp struct {
 	ID          string `json:"id,omitempty"`
+	Deprecated  bool   `json:"deprecated,omitempty"`
 	Description string `json:"description,omitempty"`
 	Type        string `json:"type,omitempty"`
 	// format is an OpenAPI v3 format string. Unknown formats are ignored. The following formats are validated:
@@ -47,8 +50,8 @@ type JSONSchemaProp struct {
 	// - isbn13: an ISBN13 number string like "978-0321751041"
 	// - creditcard: a credit card number defined by the regex ^(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|6(?:011|5[0-9][0-9])[0-9]{12}|3[47][0-9]{13}|3(?:0[0-5]|[68][0-9])[0-9]{11}|(?:2131|1800|35\\d{3})\\d{11})$ with any non digit characters mixed in
 	// - ssn: a U.S. social security number following the regex ^\\d{3}[- ]?\\d{2}[- ]?\\d{4}$
-	// - hexcolor: an hexadecimal color code like "#FFFFFF: following the regex ^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$
-	// - rgbcolor: an RGB color code like rgb like "rgb(255,255,2559"
+	// - hexcolor: an hexadecimal color code like "#FFFFFF" following the regex ^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$
+	// - rgbcolor: an RGB color code like rgb like "rgb(255,255,255)"
 	// - byte: base64 encoded binary data
 	// - password: any kind of string
 	// - date: a date string like "2006-01-02" as defined by full-date in RFC3339
@@ -74,7 +77,7 @@ type JSONSchemaProp struct {
 	Enum             []JSON       `json:"enum,omitempty"`
 	Example          *JSON        `json:"example,omitempty"`
 	Nullable         bool         `json:"nullable,omitempty"`
-	// The list of descriptors that determine which UI components to use on different views
+	// XDescriptors is a list of extended properties that trigger a custom behavior in external systems
 	XDescriptors []string `json:"x-descriptors,omitempty"`
 }
 
@@ -123,7 +126,7 @@ func (m *RawMessage) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// String returns a string representation of RawMessage
+// String returns a string representation of RawMessage.
 func (m *RawMessage) String() string {
 	if m == nil {
 		return ""
@@ -143,6 +146,6 @@ type JSONSchemaURL string
 
 // ExternalDocumentation allows referencing an external resource for extended documentation.
 type ExternalDocumentation struct {
-	Description string `json:"description,omitempty""`
+	Description string `json:"description,omitempty"`
 	URL         string `json:"url,omitempty"`
 }

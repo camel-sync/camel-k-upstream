@@ -21,28 +21,15 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/utils/pointer"
 
-	"github.com/apache/camel-k/pkg/util/kubernetes"
+	traitv1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1/trait"
+	"github.com/apache/camel-k/v2/pkg/util/kubernetes"
 )
 
-// This trait sets Tolerations over Integration pods. Tolerations allow (but do not require) the pods to schedule onto nodes with matching taints.
-// See https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/ for more details.
-//
-// The toleration should be expressed in a similar manner that of taints, i.e., `Key[=Value]:Effect[:Seconds]`, where values in square brackets are optional.
-//
-// For examples:
-//
-// - `node-role.kubernetes.io/master:NoSchedule`
-// - `node.kubernetes.io/network-unavailable:NoExecute:3000`
-// - `disktype=ssd:PreferNoSchedule`
-//
-// It's disabled by default.
-//
-// +camel-k:trait=toleration
 type tolerationTrait struct {
-	BaseTrait `property:",squash"`
-	// The list of taints to tolerate, in the form `Key[=Value]:Effect[:Seconds]`
-	Taints []string `property:"taints" json:"taints,omitempty"`
+	BaseTrait
+	traitv1.TolerationTrait `property:",squash"`
 }
 
 func newTolerationTrait() Trait {
@@ -51,19 +38,19 @@ func newTolerationTrait() Trait {
 	}
 }
 
-func (t *tolerationTrait) Configure(e *Environment) (bool, error) {
-	if IsNilOrFalse(t.Enabled) {
-		return false, nil
+func (t *tolerationTrait) Configure(e *Environment) (bool, *TraitCondition, error) {
+	if e.Integration == nil || !pointer.BoolDeref(t.Enabled, false) {
+		return false, nil, nil
 	}
 
 	if len(t.Taints) == 0 {
-		return false, fmt.Errorf("no taint was provided")
+		return false, nil, fmt.Errorf("no taint was provided")
 	}
 
-	return e.IntegrationInRunningPhases(), nil
+	return e.IntegrationInRunningPhases(), nil, nil
 }
 
-func (t *tolerationTrait) Apply(e *Environment) (err error) {
+func (t *tolerationTrait) Apply(e *Environment) error {
 	tolerations, err := kubernetes.NewTolerations(t.Taints)
 	if err != nil {
 		return err

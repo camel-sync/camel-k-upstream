@@ -20,13 +20,14 @@ package threescale
 import (
 	"testing"
 
-	v1 "github.com/apache/camel-k/pkg/apis/camel/v1"
-	"github.com/apache/camel-k/pkg/trait"
-	"github.com/apache/camel-k/pkg/util/camel"
-	"github.com/apache/camel-k/pkg/util/kubernetes"
+	v1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+	"github.com/apache/camel-k/v2/pkg/trait"
+	"github.com/apache/camel-k/v2/pkg/util/camel"
+	"github.com/apache/camel-k/v2/pkg/util/kubernetes"
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/pointer"
 )
 
 func TestThreeScaleDisabled(t *testing.T) {
@@ -38,19 +39,21 @@ func TestThreeScaleDisabled(t *testing.T) {
 	}
 
 	threeScale := NewThreeScaleTrait()
-	enabled, err := threeScale.Configure(e)
+	enabled, condition, err := threeScale.Configure(e)
 	assert.Nil(t, err)
 	assert.False(t, enabled)
+	assert.Nil(t, condition)
 }
 
 func TestThreeScaleInjection(t *testing.T) {
 	svc, e := createEnvironment(t)
 	threeScale := NewThreeScaleTrait()
-	enabled := true
-	threeScale.(*threeScaleTrait).Enabled = &enabled
-	ok, err := threeScale.Configure(e)
+	tst, _ := threeScale.(*threeScaleTrait)
+	tst.Enabled = pointer.Bool(true)
+	ok, condition, err := threeScale.Configure(e)
 	assert.Nil(t, err)
 	assert.True(t, ok)
+	assert.Nil(t, condition)
 
 	err = threeScale.Apply(e)
 	assert.Nil(t, err)
@@ -65,13 +68,13 @@ func TestThreeScaleInjection(t *testing.T) {
 func TestThreeScaleInjectionNoAPIPath(t *testing.T) {
 	svc, e := createEnvironment(t)
 	threeScale := NewThreeScaleTrait()
-	enabled := true
-	threeScale.(*threeScaleTrait).Enabled = &enabled
-	noPath := ""
-	threeScale.(*threeScaleTrait).DescriptionPath = &noPath
-	ok, err := threeScale.Configure(e)
+	tst, _ := threeScale.(*threeScaleTrait)
+	tst.Enabled = pointer.Bool(true)
+	tst.DescriptionPath = pointer.String("")
+	ok, condition, err := threeScale.Configure(e)
 	assert.Nil(t, err)
 	assert.True(t, ok)
+	assert.Nil(t, condition)
 
 	err = threeScale.Apply(e)
 	assert.Nil(t, err)
@@ -85,6 +88,8 @@ func TestThreeScaleInjectionNoAPIPath(t *testing.T) {
 }
 
 func createEnvironment(t *testing.T) (*corev1.Service, *trait.Environment) {
+	t.Helper()
+
 	catalog, err := camel.DefaultCatalog()
 	assert.Nil(t, err)
 

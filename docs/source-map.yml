@@ -21,5 +21,5 @@
         - url: 'https://github.com/apache/camel-k.git'
           mapped-url: './../camel-k'
           branches:
-            - branch: release-1.6.x
+            - branch: main
               mapped-branch: HEAD

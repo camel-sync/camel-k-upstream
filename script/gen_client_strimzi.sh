@@ -20,21 +20,21 @@ set -e
 location=$(dirname $0)
 rootdir=$location/..
 
-unset GOPATH
 GO111MODULE=on
 
 echo "Generating Go client code for Strimzi addon..."
 
 cd $rootdir
 
-go run k8s.io/code-generator/cmd/client-gen \
+$(go env GOPATH)/bin/client-gen \
   -h script/headers/default.txt \
   --input duck/v1beta2 \
-  --input-base=github.com/apache/camel-k/addons/strimzi \
-  --output-package=github.com/apache/camel-k/addons/strimzi/duck/client
+  --input-base=github.com/apache/camel-k/v2/addons/strimzi \
+  --output-base=. \
+  --output-package=github.com/apache/camel-k/v2/addons/strimzi/duck/client
 
 rm -r ./addons/strimzi/duck/client || true
 
-mv github.com/apache/camel-k/addons/strimzi/duck/client ./addons/strimzi/duck/
+mv github.com/apache/camel-k/v2/addons/strimzi/duck/client ./addons/strimzi/duck/
 
 rm -r ./github.com

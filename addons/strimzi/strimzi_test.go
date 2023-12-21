@@ -22,12 +22,12 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/apache/camel-k/addons/strimzi/duck/client/internalclientset/fake"
-	"github.com/apache/camel-k/addons/strimzi/duck/v1beta2"
-	camelv1 "github.com/apache/camel-k/pkg/apis/camel/v1"
-	"github.com/apache/camel-k/pkg/apis/camel/v1alpha1"
-	"github.com/apache/camel-k/pkg/util/bindings"
-	"github.com/apache/camel-k/pkg/util/test"
+	"github.com/apache/camel-k/v2/addons/strimzi/duck/client/internalclientset/fake"
+	"github.com/apache/camel-k/v2/addons/strimzi/duck/v1beta2"
+	camelv1 "github.com/apache/camel-k/v2/pkg/apis/camel/v1"
+
+	"github.com/apache/camel-k/v2/pkg/util/bindings"
+	"github.com/apache/camel-k/v2/pkg/util/test"
 	"github.com/stretchr/testify/assert"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -47,7 +47,7 @@ func TestStrimziDirect(t *testing.T) {
 		Profile:   camelv1.TraitProfileKubernetes,
 	}
 
-	endpoint := v1alpha1.Endpoint{
+	endpoint := camelv1.Endpoint{
 		Ref: &v1.ObjectReference{
 			Kind:       "KafkaTopic",
 			Name:       "mytopic",
@@ -58,13 +58,13 @@ func TestStrimziDirect(t *testing.T) {
 		}),
 	}
 
-	binding, err := StrimziBindingProvider{}.Translate(bindingContext, bindings.EndpointContext{
-		Type: v1alpha1.EndpointTypeSink,
+	binding, err := BindingProvider{}.Translate(bindingContext, bindings.EndpointContext{
+		Type: camelv1.EndpointTypeSink,
 	}, endpoint)
 	assert.NoError(t, err)
 	assert.NotNil(t, binding)
 	assert.Equal(t, "kafka:mytopic?brokers=my-cluster-kafka-bootstrap%3A9092", binding.URI)
-	assert.Nil(t, binding.Traits)
+	assert.Equal(t, camelv1.Traits{}, binding.Traits)
 }
 
 func TestStrimziLookup(t *testing.T) {
@@ -100,7 +100,7 @@ func TestStrimziLookup(t *testing.T) {
 	}
 
 	client := fake.NewSimpleClientset(&cluster, &topic)
-	provider := StrimziBindingProvider{
+	provider := BindingProvider{
 		Client: client,
 	}
 
@@ -110,7 +110,7 @@ func TestStrimziLookup(t *testing.T) {
 		Profile:   camelv1.TraitProfileKubernetes,
 	}
 
-	endpoint := v1alpha1.Endpoint{
+	endpoint := camelv1.Endpoint{
 		Ref: &v1.ObjectReference{
 			Kind:       "KafkaTopic",
 			Name:       "mytopicy",
@@ -119,20 +119,20 @@ func TestStrimziLookup(t *testing.T) {
 	}
 
 	binding, err := provider.Translate(bindingContext, bindings.EndpointContext{
-		Type: v1alpha1.EndpointTypeSink,
+		Type: camelv1.EndpointTypeSink,
 	}, endpoint)
 	assert.NoError(t, err)
 	assert.NotNil(t, binding)
 	assert.Equal(t, "kafka:mytopicy?brokers=my-clusterx-kafka-bootstrap%3A9092", binding.URI)
-	assert.Nil(t, binding.Traits)
+	assert.Equal(t, camelv1.Traits{}, binding.Traits)
 }
 
-func asEndpointProperties(props map[string]string) *v1alpha1.EndpointProperties {
+func asEndpointProperties(props map[string]string) *camelv1.EndpointProperties {
 	serialized, err := json.Marshal(props)
 	if err != nil {
 		panic(err)
 	}
-	return &v1alpha1.EndpointProperties{
+	return &camelv1.EndpointProperties{
 		RawMessage: serialized,
 	}
 }
