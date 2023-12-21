@@ -1,0 +1,146 @@
+# ---------------------------------------------------------------------------
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ---------------------------------------------------------------------------
+
+name: release-nightly
+description: 'action used to release nightly'
+
+inputs:
+  goVersionFile:
+    required: true
+    type: string
+  javaVersion:
+    required: true
+    type: string
+  # Make sure to treat the below values confidential (ie, not logging)
+  secretE2ECluster:
+    required: true
+  secretE2EKube:
+    required: true
+  secretDockerHubUser:
+    required: true
+  secretDockerHubPassword:
+    required: true
+  secretGithubToken:
+    required: true
+
+runs:
+  using: "composite"
+
+  steps:
+    - name: Set up JDK ${{ inputs.javaVersion }}
+      uses: actions/setup-java@v3
+      with:
+        java-version: ${{ inputs.javaVersion }}
+        distribution: "temurin"
+    - name: Install Go ${{ inputs.goVersionFile }}
+      uses: actions/setup-go@v4
+      with:
+        go-version-file: ${{ inputs.goVersionFile }}
+        check-latest: true
+    - name: Common smoke tests
+      uses: ./.github/actions/e2e-common
+      with:
+        cluster-config-data: ${{ inputs.secretE2ECluster }}
+        cluster-kube-config-data: ${{ inputs.secretE2EKube }}
+        smoke-test-only: true
+    - name: Cache modules
+      uses: actions/cache@v3
+      with:
+        path: ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+    - name: Get nightly version and update date
+      shell: bash
+      run: |
+        V="$(make get-version | sed s/-SNAPSHOT//)-nightly"
+        D=$(date)
+        echo "VERSION=$V" >> $GITHUB_ENV
+        echo "UPD_DATE=$D" >> $GITHUB_ENV
+    - name: Global Env
+      shell: bash
+      run: |
+        echo "Using VERSION=${{ env.VERSION }}"
+
+        IMAGE_NAME=docker.io/${TEST_DOCKER_HUB_USERNAME:-testcamelk}/camel-k
+        echo "Using IMAGE_NAME=$IMAGE_NAME"
+        echo "IMAGE_NAME=$IMAGE_NAME" >> $GITHUB_ENV
+
+        MAVEN_REPOSITORY=$(make get-staging-repo)
+        echo "Using MAVEN_REPOSITORY=$MAVEN_REPOSITORY"
+        echo "MAVEN_REPOSITORY=$MAVEN_REPOSITORY" >> $GITHUB_ENV
+    - name: Install newer docker CLI supporting multi platform build
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install ca-certificates curl gnupg
+        sudo install -m 0755 -d /etc/apt/keyrings
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+        sudo chmod a+r /etc/apt/keyrings/docker.gpg
+        echo \
+        "deb [arch="$(dpkg --print-architecture)" signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+        "$(. /etc/os-release && echo "$VERSION_CODENAME")" stable" | \
+        sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+        sudo apt-get update
+        sudo apt-get install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    - name: Set up QEMU (required by multi platform build)
+      uses: docker/setup-qemu-action@v2
+    - name: Login to Container Registry
+      uses: docker/login-action@v2
+      with:
+        username: ${{ inputs.secretDockerHubUser }}
+        password: ${{ inputs.secretDockerHubPassword }}
+    - name: Build and release containers
+      shell: bash
+      run: |
+        make VERSION=${{ env.VERSION }} IMAGE_NAME=${{ env.IMAGE_NAME }} images-nightly
+        make IMAGE_ARCH=arm64 VERSION=${{ env.VERSION }} IMAGE_NAME=${{ env.IMAGE_NAME }} images-nightly
+        make VERSION=${{ env.VERSION }} IMAGE_NAME=${{ env.IMAGE_NAME }} release-nightly
+    - name: Create Release
+      id: create_release
+      uses: ncipollo/release-action@58ae73b360456532aafd58ee170c045abbeaee37
+      with:
+        artifacts: "./camel-k-client*.tar.gz"
+        body: |
+          Apache Camel K ${{ env.VERSION }} build for testing (unstable). This nightly release is using
+          an **unsupported** operator image published as `${{ env.IMAGE_NAME }}:${{ env.VERSION }}` (default `amd64` architecture,
+          `-arm64` suffix for ARM64 architectures)
+
+          To test it, download the client for your OS and run:
+          ```
+          kamel install --olm=false --maven-repository=${{ env.MAVEN_REPOSITORY }}
+          ```
+
+          To test ARM64 architecture, download the client for your OS and run:
+          ```
+          kamel install --olm=false --operator-image=${{ env.IMAGE_NAME }}:${{ env.VERSION }}-arm64 --maven-repository=${{ env.MAVEN_REPOSITORY }}
+          ```
+
+          NOTE: last updated on ${{ env.UPD_DATE }}
+        token: ${{ inputs.secretGithubToken }}
+        draft: false
+        prerelease: true
+        allowUpdates: true
+        replacesArtifacts: true
+        tag: ${{ env.VERSION }}
+        commit: main
+    # If release was okey, we can also release the CRD Fabric8 extensions
+    - name: Deploy Camel-K-CRDs to ASF Snapshots Repository
+      working-directory: java
+      shell: bash
+      run: |
+        ./mvnw clean deploy --settings ../.github/asf-deploy-settings.xml -q
