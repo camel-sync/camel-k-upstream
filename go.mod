@@ -13,7 +13,7 @@ require (
 	github.com/google/uuid v1.5.0
 	github.com/imdario/mergo v0.3.13
 	github.com/jpillora/backoff v1.0.0
-	github.com/magiconair/properties v1.8.7
+	github.com/magiconair/properties v1.8.10
 	github.com/mattn/go-shellwords v1.0.12
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/onsi/gomega v1.30.0
